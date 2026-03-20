@@ -1445,12 +1445,12 @@ mod tests {
     #[test]
     fn test_enter_dir_permission_denied_rolls_back() {
         // root はパーミッション制限を無視するためスキップ
-        if std::fs::read_to_string("/proc/self/status")
+        let is_root = std::process::Command::new("id").arg("-u").output()
             .ok()
-            .and_then(|s| s.lines().find(|l| l.starts_with("Uid:")).map(|l| l.to_string()))
-            .and_then(|l| l.split_whitespace().nth(1).and_then(|v| v.parse::<u32>().ok()))
-            == Some(0)
-        { return; }
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            == Some(0);
+        if is_root { return; }
         use std::os::unix::fs::PermissionsExt;
         let dir = tempdir().unwrap();
         let sub = dir.path().join("locked");
