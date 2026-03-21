@@ -256,8 +256,27 @@ pub fn get_git_branch(path: &Path) -> Option<String> {
 
 pub fn get_git_status(path: &Path) -> HashMap<String, char> {
     let mut map = HashMap::new();
+
+    // Resolve git root so paths in --porcelain output are unambiguous
+    let Ok(root_out) = std::process::Command::new("git")
+        .args(["-C", &path.to_string_lossy(), "rev-parse", "--show-toplevel"])
+        .output()
+    else {
+        return map;
+    };
+    if !root_out.status.success() {
+        return map;
+    }
+    let root = PathBuf::from(String::from_utf8_lossy(&root_out.stdout).trim());
+
+    // Prefix to strip: relative path from root to path, e.g. "src/"
+    let prefix = path.strip_prefix(&root)
+        .ok()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| format!("{}/", p.display()));
+
     let Ok(o) = std::process::Command::new("git")
-        .args(["-C", &path.to_string_lossy(), "status", "--porcelain"])
+        .args(["-C", &root.to_string_lossy(), "status", "--porcelain"])
         .output()
     else {
         return map;
@@ -283,11 +302,17 @@ pub fn get_git_status(path: &Path) -> HashMap<String, char> {
             continue;
         }
         let name = line[3..].trim_matches('"');
-        let name = if let Some(i) = name.find(" -> ") {
-            &name[i + 4..]
-        } else {
-            name
+        let name = if let Some(i) = name.find(" -> ") { &name[i + 4..] } else { name };
+
+        // Strip directory prefix; skip entries outside current directory
+        let name = match &prefix {
+            Some(pfx) => match name.strip_prefix(pfx.as_str()) {
+                Some(s) => s,
+                None => continue,
+            },
+            None => name,
         };
+
         if let Some(first) = name.split('/').next() {
             map.insert(first.to_string(), ch);
         }
@@ -384,13 +409,27 @@ fn split_command_args(s: &str) -> Result<Vec<String>> {
     Ok(args)
 }
 
-pub fn run_command(cmd: &str) -> Result<()> {
+pub fn run_command(cmd: &str, dir: &Path) -> Result<()> {
+    use crossterm::event::{self, Event};
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
     std::process::Command::new("sh")
         .args(["-c", cmd])
+        .current_dir(dir)
         .status()?;
+    print!("\n--- Press any key to continue ---");
+    let _ = std::io::Write::flush(&mut stdout());
     enable_raw_mode()?;
+    // drain buffered input left from the command or previous interaction
+    while event::poll(std::time::Duration::ZERO)? {
+        let _ = event::read();
+    }
+    // wait for one keypress
+    loop {
+        if matches!(event::read()?, Event::Key(_)) {
+            break;
+        }
+    }
     stdout().execute(EnterAlternateScreen)?;
     Ok(())
 }

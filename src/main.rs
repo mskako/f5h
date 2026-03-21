@@ -48,7 +48,7 @@ fn main() -> Result<()> {
                             let cmd: String = dlg.input.iter().collect();
                             app.run_dialog = None;
                             if !cmd.trim().is_empty() {
-                                run_command(&cmd)?;
+                                run_command(&cmd, &app.current_dir)?;
                                 terminal.clear()?;
                                 app.reload();
                             }
