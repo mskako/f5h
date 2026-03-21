@@ -15,6 +15,8 @@ use std::{
     ffi::CString,
     os::unix::ffi::OsStrExt,
 };
+#[cfg(target_os = "macos")]
+use std::ffi::CStr;
 
 // ── Date / time ────────────────────────────────────────────────────────
 
