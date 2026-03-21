@@ -4,6 +4,27 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- macOS `LSCOLORS` support as a fallback when `LS_COLORS` is not set
+- Tests covering macOS/Linux color parsing, symlink directory navigation, and quoted program arguments
+
+### Changed
+
+- Replaced `df`-based volume size detection with `statvfs`
+- Replaced `df`-based volume source/filesystem detection with `statfs` on macOS and `/proc/self/mountinfo` parsing on Linux
+- Treated symlinks to directories as enterable directories while keeping symlink-specific file info display
+- Normalized tree tests for macOS temporary-directory path differences
+- Ignored `..` in tag toggling and tag-all operations
+- Improved external program launching to respect quoted arguments and backslash escapes in `[programs]`
+
+### Fixed
+
+- Symlink file info no longer depends on platform-specific `file` output for directory links such as `/tmp`
+- `if-newer` tests no longer rely on sub-second filesystem timestamp resolution
+
 ## [0.1.0] - 2026-03-20
 
 ### Added

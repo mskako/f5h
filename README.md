@@ -29,7 +29,8 @@ e:Edit  ::Run  t:Tree  c:Copy  m:Move  d:Del  n:Name  a:Perm  q:Quit
 - **File operations**: copy (`c`), move (`m`), delete (`d`), rename (`n`), chmod (`a`), mkdir (`K`), open in editor (`e`)
   - FILMTN-style conflict dialog with U:if-newer / O:overwrite / C:rename / N:skip + Shift+ batch mode
 - Git integration: branch display (Nerd Font icon) and per-file status in the prefix column
-- `LS_COLORS`-based file coloring
+- File coloring from `LS_COLORS` (GNU/Linux) or `LSCOLORS` (macOS)
+- Symlink-aware navigation: symlinks to directories can be entered with `Enter`
 - Extension-to-program associations (open PDFs with Evince, images with feh, etc.)
 - Fully configurable UI colors: border, title, label, unit, date
 - Configurable keybindings via TOML
@@ -82,6 +83,7 @@ All bindings (except arrow keys) are remappable in `config.toml`.
 Arrow keys are hardcoded aliases for `hjkl` and cannot be rebound.
 
 When opening a file, f5h looks up the file's extension in `[programs]`, then falls back to the configured pager.
+Symlinks to directories are treated as enterable directories, while the file info pane shows the symlink target.
 
 ### Copy / Move Conflict Dialog
 
@@ -114,25 +116,16 @@ Config file: `~/.config/f5h/config.toml`
 
 All sections and keys are optional. Omitted values fall back to their defaults.
 
-### [editor]
+### [programs]
 
 ```toml
-[editor]
-program = "vim"   # fallback: $EDITOR → vi
-```
-
-### [pager]
-
-```toml
-[pager]
-program = "less"  # fallback: $PAGER → less
-```
-
-### [display]
-
-```toml
-[display]
-show_hidden = false   # show dotfiles (. prefixed entries)
+[programs]
+editor = "vim"   # fallback: $EDITOR → nano
+pager  = "less"  # fallback: $PAGER  → less
+pdf    = "evince"
+jpg    = "feh"
+png    = "feh"
+mp4    = "mpv"
 ```
 
 ### [colors]
@@ -145,7 +138,14 @@ label  = "cyan"    # field labels (" 空き:" " 権限:" etc.) — "information 
 unit   = "cyan"    # measurement units (Gi / Ki / B / %)
 date   = "white"   # file timestamps (修正/変更/作成/参照)
 clock  = "white"   # live clock in the top-right corner
-ls_colors = ""     # LS_COLORS string; empty = use $LS_COLORS env var
+ls_colors = ""     # color string; empty = use $LS_COLORS on Linux or $LSCOLORS on macOS
+```
+
+### [display]
+
+```toml
+[display]
+show_hidden = false   # show dotfiles (. prefixed entries)
 ```
 
 Available color names:
@@ -205,18 +205,7 @@ Key string format:
 | Function keys | `"F1"` … `"F12"` |
 | With Ctrl | `"Ctrl+a"` `"Ctrl+Space"` |
 
-### [extensions]
-
-```toml
-[extensions]
-pdf  = "evince"
-jpg  = "feh"
-png  = "feh"
-mp4  = "mpv"
-mp3  = "mpv"
-html = "w3m"
-zip  = "unzip"
-```
+`[programs]` holds both `editor` / `pager` and extension-specific handlers.
 
 ## Roadmap
 

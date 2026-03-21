@@ -1,10 +1,14 @@
 use anyhow::Result;
 use ratatui::style::Style;
-use std::{collections::HashMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::config::{
-    build_keymap, key_label, Config, KeyMap, Labels, UiColors,
-    LABELS_EN, LABELS_JA, MENU_ACTIONS, parse_ls_colors,
+    Config, KeyMap, LABELS_EN, LABELS_JA, Labels, MENU_ACTIONS, UiColors, build_keymap, key_label,
+    parse_file_colors,
 };
 use crate::fs_utils::{
     copy_path, disk_stats, fmt_datetime, get_file_info, get_git_branch, get_git_status,
@@ -14,94 +18,106 @@ use crate::fs_utils::{
 // ── Data structures ────────────────────────────────────────────────────
 
 pub struct FileEntry {
-    pub name:     String,
-    pub is_dir:   bool,
-    pub is_link:  bool,
-    pub size:     u64,
-    pub blocks:   u64,
-    pub inode:    u64,
-    pub nlink:    u64,
-    pub uid:      u32,
-    pub gid:      u32,
-    pub date:     String,          // mtime: YYYY-MM-DD
-    pub time_str: String,          // mtime: HH:MM
-    pub time_full: String,         // mtime: HH:MM:SS
-    pub atime_s:  String,          // atime: YYYY-MM-DD HH:MM:SS
-    pub ctime_s:  String,          // ctime: YYYY-MM-DD HH:MM:SS
-    pub birth_s:  Option<String>,  // birth: YYYY-MM-DD HH:MM:SS (if available)
-    pub mode:     u32,
+    pub name: String,
+    pub is_dir: bool,
+    pub is_link: bool,
+    pub size: u64,
+    pub blocks: u64,
+    pub inode: u64,
+    pub nlink: u64,
+    pub uid: u32,
+    pub gid: u32,
+    pub date: String,            // mtime: YYYY-MM-DD
+    pub time_str: String,        // mtime: HH:MM
+    pub time_full: String,       // mtime: HH:MM:SS
+    pub atime_s: String,         // atime: YYYY-MM-DD HH:MM:SS
+    pub ctime_s: String,         // ctime: YYYY-MM-DD HH:MM:SS
+    pub birth_s: Option<String>, // birth: YYYY-MM-DD HH:MM:SS (if available)
+    pub mode: u32,
 }
 
 pub struct RunDialog {
-    pub input:  Vec<char>, // full command line
-    pub cursor: usize,     // char index
+    pub input: Vec<char>, // full command line
+    pub cursor: usize,    // char index
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum DialogKind { DeleteConfirm, Rename, Copy, Move, Mkdir, Attr, CopyNewName }
+pub enum DialogKind {
+    DeleteConfirm,
+    Rename,
+    Copy,
+    Move,
+    Mkdir,
+    Attr,
+    CopyNewName,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum ConflictChoice { IfNewer, Overwrite, Skip }
+pub enum ConflictChoice {
+    IfNewer,
+    Overwrite,
+    Skip,
+}
 
 pub struct OverwritePrompt {
-    pub dest:     PathBuf,
-    pub conflict: String,      // filename already existing at dest
-    pub todo:     Vec<String>, // remaining files after conflict
-    pub is_move:  bool,
-    pub batch:    Option<ConflictChoice>, // set by Shift+: apply to all remaining
+    pub dest: PathBuf,
+    pub conflict: String,  // filename already existing at dest
+    pub todo: Vec<String>, // remaining files after conflict
+    pub is_move: bool,
+    pub batch: Option<ConflictChoice>, // set by Shift+: apply to all remaining
 }
 
 pub struct FileDialog {
-    pub kind:            DialogKind,
-    pub input:           Vec<char>,
-    pub cursor:          usize,
-    pub targets:         Vec<String>,
-    pub dest:            Option<PathBuf>,   // used by CopyNewName
-    pub conflict_rename: bool,              // true while C-rename sub-dialog is active
-    pub error:           Option<String>,
-    pub overwrite:       Option<OverwritePrompt>,
+    pub kind: DialogKind,
+    pub input: Vec<char>,
+    pub cursor: usize,
+    pub targets: Vec<String>,
+    pub dest: Option<PathBuf>, // used by CopyNewName
+    pub conflict_rename: bool, // true while C-rename sub-dialog is active
+    pub error: Option<String>,
+    pub overwrite: Option<OverwritePrompt>,
 }
 
 pub struct TreeNode {
-    pub path:         PathBuf,
-    pub name:         String,
-    pub depth:        usize,
-    pub expanded:     bool,
+    pub path: PathBuf,
+    pub name: String,
+    pub depth: usize,
+    pub expanded: bool,
     pub has_children: bool,
 }
 
 pub struct App {
-    pub current_dir:  PathBuf,
-    pub entries:      Vec<FileEntry>,
-    pub cursor:       usize,
-    pub tagged:       Vec<bool>,
-    pub col_mode:     u8,
-    pub quit:         bool,
-    pub tree_open:    bool,
-    pub tree_focus:   bool,
-    pub tree_cursor:  usize,
-    pub tree_offset:  usize,
-    pub tree_nodes:   Vec<TreeNode>,
-    pub free_bytes:   u64,
-    pub total_bytes:  u64,
-    pub used_bytes:   u64,
-    pub volume_info:  String,
-    pub file_type:    String,
-    pub owner_s:      String,
-    pub git_branch:   Option<String>,
-    pub git_status:   HashMap<String, char>,
-    pub ls_colors:    HashMap<String, Style>,
-    pub ui_colors:    UiColors,
-    pub labels:       &'static Labels,
-    pub lang_en:      bool,
-    pub keymap:       KeyMap,
-    pub menu_items:   Vec<(String, String)>,
-    pub error_msg:    Option<String>,
-    pub run_dialog:   Option<RunDialog>,
-    pub file_dialog:  Option<FileDialog>,
-    pub show_hidden:  bool,
-    pub pager:        String,
-    pub editor:       String,
+    pub current_dir: PathBuf,
+    pub entries: Vec<FileEntry>,
+    pub cursor: usize,
+    pub tagged: Vec<bool>,
+    pub col_mode: u8,
+    pub quit: bool,
+    pub tree_open: bool,
+    pub tree_focus: bool,
+    pub tree_cursor: usize,
+    pub tree_offset: usize,
+    pub tree_nodes: Vec<TreeNode>,
+    pub free_bytes: u64,
+    pub total_bytes: u64,
+    pub used_bytes: u64,
+    pub volume_info: String,
+    pub file_type: String,
+    pub owner_s: String,
+    pub git_branch: Option<String>,
+    pub git_status: HashMap<String, char>,
+    pub ls_colors: HashMap<String, Style>,
+    pub ui_colors: UiColors,
+    pub labels: &'static Labels,
+    pub lang_en: bool,
+    pub keymap: KeyMap,
+    pub menu_items: Vec<(String, String)>,
+    pub error_msg: Option<String>,
+    pub run_dialog: Option<RunDialog>,
+    pub file_dialog: Option<FileDialog>,
+    pub show_hidden: bool,
+    pub pager: String,
+    pub editor: String,
     pub ext_programs: HashMap<String, String>,
 }
 
@@ -122,29 +138,42 @@ impl App {
         let ls_src = if !config.colors.ls_colors.is_empty() {
             config.colors.ls_colors.clone()
         } else {
-            std::env::var("LS_COLORS").unwrap_or_default()
+            std::env::var("LS_COLORS")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .or_else(|| std::env::var("LSCOLORS").ok().filter(|s| !s.is_empty()))
+                .unwrap_or_default()
         };
         let ui_colors = UiColors::from_config(&config.colors);
-        let labels: &'static Labels = if config.display.lang == "en" { &LABELS_EN } else { &LABELS_JA };
+        let labels: &'static Labels = if config.display.lang == "en" {
+            &LABELS_EN
+        } else {
+            &LABELS_JA
+        };
         let lang_en = config.display.lang == "en";
 
         let keymap = build_keymap(&config.keys);
 
         // [programs] から editor/pager を取り出し、残りを拡張子マップとして使う
         let mut programs = config.programs;
-        let pager = programs.remove("pager")
+        let pager = programs
+            .remove("pager")
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| std::env::var("PAGER").unwrap_or_else(|_| "less".to_string()));
-        let editor = programs.remove("editor")
+        let editor = programs
+            .remove("editor")
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| std::env::var("EDITOR").unwrap_or_else(|_| "nano".to_string()));
         let ext_programs = programs;
 
-        let menu_items = MENU_ACTIONS.iter().map(|&(action, label_ja, label_en)| {
-            let key   = key_label(&keymap, action);
-            let label = if lang_en { label_en } else { label_ja };
-            (key, label.to_string())
-        }).collect();
+        let menu_items = MENU_ACTIONS
+            .iter()
+            .map(|&(action, label_ja, label_en)| {
+                let key = key_label(&keymap, action);
+                let label = if lang_en { label_en } else { label_ja };
+                (key, label.to_string())
+            })
+            .collect();
 
         let mut app = App {
             current_dir,
@@ -170,14 +199,14 @@ impl App {
             pager,
             editor,
             ext_programs,
-            ls_colors: parse_ls_colors(&ls_src),
+            ls_colors: parse_file_colors(&ls_src),
             ui_colors,
             labels,
             lang_en,
             keymap,
             menu_items,
-            error_msg:   None,
-            run_dialog:  None,
+            error_msg: None,
+            run_dialog: None,
             file_dialog: None,
         };
         app.load_entries()?;
@@ -189,41 +218,72 @@ impl App {
         self.entries.clear();
         if self.current_dir.parent().is_some() {
             let parent_mode = fs::metadata(&self.current_dir)
-                .map(|m| { use std::os::unix::fs::PermissionsExt; m.permissions().mode() })
+                .map(|m| {
+                    use std::os::unix::fs::PermissionsExt;
+                    m.permissions().mode()
+                })
                 .unwrap_or(0);
             self.entries.push(FileEntry {
-                name: "..".to_string(), is_dir: true, is_link: false,
-                size: 0, blocks: 0, inode: 0, nlink: 0, uid: 0, gid: 0,
-                date: String::new(), time_str: String::new(), time_full: String::new(),
-                atime_s: String::new(), ctime_s: String::new(), birth_s: None,
+                name: "..".to_string(),
+                is_dir: true,
+                is_link: false,
+                size: 0,
+                blocks: 0,
+                inode: 0,
+                nlink: 0,
+                uid: 0,
+                gid: 0,
+                date: String::new(),
+                time_str: String::new(),
+                time_full: String::new(),
+                atime_s: String::new(),
+                ctime_s: String::new(),
+                birth_s: None,
                 mode: parent_mode,
             });
         }
-        let mut dirs  = Vec::new();
+        let mut dirs = Vec::new();
         let mut files = Vec::new();
         for entry in fs::read_dir(&self.current_dir)? {
             let entry = entry?;
+            let path = entry.path();
             let name = entry.file_name().to_string_lossy().to_string();
-            if !self.show_hidden && name.starts_with('.') { continue; }
-            let is_link = fs::symlink_metadata(entry.path())
-                .map(|m: fs::Metadata| m.file_type().is_symlink())
-                .unwrap_or(false);
-            let meta = match entry.metadata() { Ok(m) => m, Err(_) => continue };
-            let (date, time_str, time_full) = meta.modified().ok()
-                .and_then(|t| Some(fmt_datetime(
-                    t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok()?.as_secs()
-                )))
-                .unwrap_or_else(|| (
-                    "--/--/--".to_string(),
-                    "--:--".to_string(),
-                    "--:--:--".to_string(),
-                ));
+            if !self.show_hidden && name.starts_with('.') {
+                continue;
+            }
+            let link_meta = match fs::symlink_metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let is_link = link_meta.file_type().is_symlink();
+            let meta = match fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) if is_link => link_meta,
+                Err(_) => continue,
+            };
+            let (date, time_str, time_full) = meta
+                .modified()
+                .ok()
+                .and_then(|t| {
+                    Some(fmt_datetime(
+                        t.duration_since(std::time::SystemTime::UNIX_EPOCH)
+                            .ok()?
+                            .as_secs(),
+                    ))
+                })
+                .unwrap_or_else(|| {
+                    (
+                        "--/--/--".to_string(),
+                        "--:--".to_string(),
+                        "--:--:--".to_string(),
+                    )
+                });
             use std::os::unix::fs::{MetadataExt, PermissionsExt};
-            let mode   = meta.permissions().mode();
-            let inode  = meta.ino();
-            let nlink  = meta.nlink();
-            let uid    = meta.uid();
-            let gid    = meta.gid();
+            let mode = meta.permissions().mode();
+            let inode = meta.ino();
+            let nlink = meta.nlink();
+            let uid = meta.uid();
+            let gid = meta.gid();
             let blocks = meta.blocks();
 
             let atime_s = {
@@ -236,7 +296,9 @@ impl App {
                 let (d, _, t) = fmt_datetime(secs);
                 format!("{} {}", d, t)
             };
-            let birth_s = meta.created().ok()
+            let birth_s = meta
+                .created()
+                .ok()
                 .and_then(|t| t.duration_since(std::time::SystemTime::UNIX_EPOCH).ok())
                 .map(|d| {
                     let (date, _, tf) = fmt_datetime(d.as_secs());
@@ -244,40 +306,58 @@ impl App {
                 });
 
             let fe = FileEntry {
-                name, is_dir: meta.is_dir(), is_link,
-                size: meta.len(), blocks, inode, nlink, uid, gid,
-                date, time_str, time_full,
-                atime_s, ctime_s, birth_s,
+                name,
+                is_dir: meta.is_dir(),
+                is_link,
+                size: meta.len(),
+                blocks,
+                inode,
+                nlink,
+                uid,
+                gid,
+                date,
+                time_str,
+                time_full,
+                atime_s,
+                ctime_s,
+                birth_s,
                 mode,
             };
-            if meta.is_dir() { dirs.push(fe); } else { files.push(fe); }
+            if meta.is_dir() {
+                dirs.push(fe);
+            } else {
+                files.push(fe);
+            }
         }
-        dirs.sort_by( |a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
         self.entries.extend(dirs);
         self.entries.extend(files);
-        self.tagged      = vec![false; self.entries.len()];
+        self.tagged = vec![false; self.entries.len()];
         let (tot, used, free) = disk_stats(&self.current_dir);
         self.total_bytes = tot;
-        self.used_bytes  = used;
-        self.free_bytes  = free;
+        self.used_bytes = used;
+        self.free_bytes = free;
         self.volume_info = get_volume_info(&self.current_dir);
-        self.git_branch  = get_git_branch(&self.current_dir);
-        self.git_status  = get_git_status(&self.current_dir);
+        self.git_branch = get_git_branch(&self.current_dir);
+        self.git_status = get_git_status(&self.current_dir);
         Ok(())
     }
 
     pub fn update_file_info(&mut self) {
         match self.entries.get(self.cursor) {
             Some(e) => {
-                self.owner_s  = format!("{}:{}", resolve_name("/etc/passwd", e.uid),
-                                                 resolve_name("/etc/group",  e.gid));
+                self.owner_s = format!(
+                    "{}:{}",
+                    resolve_name("/etc/passwd", e.uid),
+                    resolve_name("/etc/group", e.gid)
+                );
                 let path = self.current_dir.join(&e.name);
                 self.file_type = get_file_info(&path);
             }
             None => {
                 self.file_type = String::new();
-                self.owner_s   = String::new();
+                self.owner_s = String::new();
             }
         }
     }
@@ -285,8 +365,11 @@ impl App {
     pub fn enter_dir(&mut self, name: &str) -> Result<()> {
         if name == ".." {
             if let Some(parent) = self.current_dir.parent() {
-                let old = self.current_dir.file_name()
-                    .map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                let old = self
+                    .current_dir
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
                 let prev = self.current_dir.clone();
                 self.current_dir = parent.to_path_buf();
                 if let Err(e) = self.load_entries() {
@@ -321,44 +404,83 @@ impl App {
         }
     }
 
-    pub fn cols(&self) -> usize { match self.col_mode { 1=>1, 2=>2, 3=>3, 5=>5, _=>2 } }
-    pub fn per_page(&self, lh: usize) -> usize { self.cols() * lh }
+    pub fn cols(&self) -> usize {
+        match self.col_mode {
+            1 => 1,
+            2 => 2,
+            3 => 3,
+            5 => 5,
+            _ => 2,
+        }
+    }
+    pub fn per_page(&self, lh: usize) -> usize {
+        self.cols() * lh
+    }
     pub fn current_page(&self, lh: usize) -> usize {
-        let pp = self.per_page(lh); if pp == 0 { 0 } else { self.cursor / pp }
+        let pp = self.per_page(lh);
+        if pp == 0 { 0 } else { self.cursor / pp }
     }
     pub fn total_pages(&self, lh: usize) -> usize {
         let pp = self.per_page(lh);
-        if pp == 0 { 1 } else { self.entries.len().max(1).div_ceil(pp) }
+        if pp == 0 {
+            1
+        } else {
+            self.entries.len().max(1).div_ceil(pp)
+        }
     }
 
     pub fn move_up(&mut self, lh: usize) {
-        if lh == 0 || self.cursor == 0 { return; }
-        let pp  = self.per_page(lh);
-        let ps  = (self.cursor / pp) * pp;
+        if lh == 0 || self.cursor == 0 {
+            return;
+        }
+        let pp = self.per_page(lh);
+        let ps = (self.cursor / pp) * pp;
         let col = (self.cursor - ps) / lh;
         let row = (self.cursor - ps) % lh;
-        if row > 0      { self.cursor -= 1; }
-        else if col > 0 { self.cursor = (ps + (col - 1) * lh + lh - 1).min(self.entries.len() - 1); }
-        else if ps > 0  { self.cursor = ps - 1; }
+        if row > 0 {
+            self.cursor -= 1;
+        } else if col > 0 {
+            self.cursor = (ps + (col - 1) * lh + lh - 1).min(self.entries.len() - 1);
+        } else if ps > 0 {
+            self.cursor = ps - 1;
+        }
         self.update_file_info();
     }
 
     pub fn move_down(&mut self, lh: usize) {
-        if lh == 0 || self.cursor + 1 >= self.entries.len() { return; }
+        if lh == 0 || self.cursor + 1 >= self.entries.len() {
+            return;
+        }
         let cols = self.cols();
-        let pp   = cols * lh;
-        let ps   = (self.cursor / pp) * pp;
-        let col  = (self.cursor - ps) / lh;
-        let row  = (self.cursor - ps) % lh;
-        if row + 1 < lh        { if self.cursor + 1 < self.entries.len() { self.cursor += 1; } }
-        else if col + 1 < cols { let t = ps + (col + 1) * lh; if t < self.entries.len() { self.cursor = t; } }
-        else                   { let t = ps + pp;              if t < self.entries.len() { self.cursor = t; } }
+        let pp = cols * lh;
+        let ps = (self.cursor / pp) * pp;
+        let col = (self.cursor - ps) / lh;
+        let row = (self.cursor - ps) % lh;
+        if row + 1 < lh {
+            if self.cursor + 1 < self.entries.len() {
+                self.cursor += 1;
+            }
+        } else if col + 1 < cols {
+            let t = ps + (col + 1) * lh;
+            if t < self.entries.len() {
+                self.cursor = t;
+            }
+        } else {
+            let t = ps + pp;
+            if t < self.entries.len() {
+                self.cursor = t;
+            }
+        }
         self.update_file_info();
     }
 
     pub fn move_left(&mut self, lh: usize) {
-        let cols = self.cols(); if lh == 0 || cols <= 1 { return; }
-        let pp = cols * lh; let ps = (self.cursor / pp) * pp;
+        let cols = self.cols();
+        if lh == 0 || cols <= 1 {
+            return;
+        }
+        let pp = cols * lh;
+        let ps = (self.cursor / pp) * pp;
         let col = (self.cursor - ps) / lh;
         let row = (self.cursor - ps) % lh;
         if col > 0 {
@@ -372,58 +494,105 @@ impl App {
     }
 
     pub fn move_right(&mut self, lh: usize) {
-        let cols = self.cols(); if lh == 0 || cols <= 1 { return; }
-        let pp = cols * lh; let ps = (self.cursor / pp) * pp;
+        let cols = self.cols();
+        if lh == 0 || cols <= 1 {
+            return;
+        }
+        let pp = cols * lh;
+        let ps = (self.cursor / pp) * pp;
         let col = (self.cursor - ps) / lh;
         let row = (self.cursor - ps) % lh;
         if col + 1 < cols {
             let t = ps + (col + 1) * lh + row;
-            if t < self.entries.len() { self.cursor = t; }
+            if t < self.entries.len() {
+                self.cursor = t;
+            }
         } else {
             let t = ps + pp;
-            if t < self.entries.len() { self.cursor = t; }
+            if t < self.entries.len() {
+                self.cursor = t;
+            }
         }
         self.update_file_info();
     }
 
     pub fn page_up(&mut self, lh: usize) {
-        let pp = self.per_page(lh); if pp == 0 { return; }
+        let pp = self.per_page(lh);
+        if pp == 0 {
+            return;
+        }
         self.cursor = self.cursor.saturating_sub(pp);
         self.update_file_info();
     }
 
     pub fn page_down(&mut self, lh: usize) {
-        let pp = self.per_page(lh); if pp == 0 { return; }
+        let pp = self.per_page(lh);
+        if pp == 0 {
+            return;
+        }
         let t = self.cursor + pp;
-        self.cursor = if t < self.entries.len() { t } else { self.entries.len().saturating_sub(1) };
+        self.cursor = if t < self.entries.len() {
+            t
+        } else {
+            self.entries.len().saturating_sub(1)
+        };
         self.update_file_info();
     }
 
     pub fn tag_toggle(&mut self) {
-        if self.cursor < self.tagged.len() { self.tagged[self.cursor] ^= true; }
+        if self.cursor < self.tagged.len()
+            && self.entries.get(self.cursor).map(|e| e.name.as_str()) != Some("..")
+        {
+            self.tagged[self.cursor] ^= true;
+        }
     }
-    pub fn tag_toggle_move(&mut self, lh: usize) { self.tag_toggle(); self.move_down(lh); }
+    pub fn tag_toggle_move(&mut self, lh: usize) {
+        self.tag_toggle();
+        self.move_down(lh);
+    }
     pub fn tag_all(&mut self) {
-        let all = self.tagged.iter().all(|&t| t);
-        for t in &mut self.tagged { *t = !all; }
+        let all = self
+            .entries
+            .iter()
+            .zip(self.tagged.iter())
+            .filter(|(e, _)| e.name != "..")
+            .all(|(_, &t)| t);
+        for (e, t) in self.entries.iter().zip(self.tagged.iter_mut()) {
+            if e.name != ".." {
+                *t = !all;
+            }
+        }
     }
-    pub fn dir_count(&self)  -> usize { self.entries.iter().filter(|e| e.is_dir && e.name != "..").count() }
-    pub fn file_count(&self) -> usize { self.entries.iter().filter(|e| !e.is_dir).count() }
+    pub fn dir_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.is_dir && e.name != "..")
+            .count()
+    }
+    pub fn file_count(&self) -> usize {
+        self.entries.iter().filter(|e| !e.is_dir).count()
+    }
     pub fn current_total_bytes(&self) -> u64 {
-        self.entries.iter().filter(|e| !e.is_dir).map(|e| e.size).sum()
+        self.entries
+            .iter()
+            .filter(|e| !e.is_dir)
+            .map(|e| e.size)
+            .sum()
     }
 
     // ── Tree pane ──────────────────────────────────────────────────────
 
     pub fn tree_rebuild(&mut self) {
         let (nodes, cur) = tree_build(&self.current_dir, self.show_hidden);
-        self.tree_nodes  = nodes;
+        self.tree_nodes = nodes;
         self.tree_cursor = cur;
         self.tree_offset = 0;
     }
 
     pub fn tree_clamp_offset(&mut self, lh: usize) {
-        if lh == 0 { return; }
+        if lh == 0 {
+            return;
+        }
         if self.tree_cursor < self.tree_offset {
             self.tree_offset = self.tree_cursor;
         } else if self.tree_cursor >= self.tree_offset + lh {
@@ -432,7 +601,9 @@ impl App {
     }
 
     pub fn tree_move_up(&mut self, lh: usize) {
-        if self.tree_cursor == 0 { return; }
+        if self.tree_cursor == 0 {
+            return;
+        }
         self.tree_cursor -= 1;
         self.tree_clamp_offset(lh);
         let path = self.tree_nodes[self.tree_cursor].path.clone();
@@ -443,7 +614,9 @@ impl App {
     }
 
     pub fn tree_move_down(&mut self, lh: usize) {
-        if self.tree_cursor + 1 >= self.tree_nodes.len() { return; }
+        if self.tree_cursor + 1 >= self.tree_nodes.len() {
+            return;
+        }
         self.tree_cursor += 1;
         self.tree_clamp_offset(lh);
         let path = self.tree_nodes[self.tree_cursor].path.clone();
@@ -454,30 +627,46 @@ impl App {
     }
 
     pub fn tree_expand(&mut self) {
-        if self.tree_cursor >= self.tree_nodes.len() { return; }
+        if self.tree_cursor >= self.tree_nodes.len() {
+            return;
+        }
         let node = &self.tree_nodes[self.tree_cursor];
-        if node.expanded || !node.has_children { return; }
-        let path  = node.path.clone();
+        if node.expanded || !node.has_children {
+            return;
+        }
+        let path = node.path.clone();
         let depth = node.depth;
         self.tree_nodes[self.tree_cursor].expanded = true;
-        let subdirs    = tree_list_subdirs(&path, self.show_hidden);
-        let insert_at  = self.tree_cursor + 1;
+        let subdirs = tree_list_subdirs(&path, self.show_hidden);
+        let insert_at = self.tree_cursor + 1;
         for (i, subpath) in subdirs.into_iter().enumerate() {
-            let name   = subpath.file_name()
-                .map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let name = subpath
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
             let has_ch = tree_has_children(&subpath, self.show_hidden);
-            self.tree_nodes.insert(insert_at + i, TreeNode {
-                path: subpath, name, depth: depth + 1, expanded: false, has_children: has_ch,
-            });
+            self.tree_nodes.insert(
+                insert_at + i,
+                TreeNode {
+                    path: subpath,
+                    name,
+                    depth: depth + 1,
+                    expanded: false,
+                    has_children: has_ch,
+                },
+            );
         }
     }
 
     pub fn tree_collapse(&mut self, lh: usize) {
-        if self.tree_cursor >= self.tree_nodes.len() { return; }
+        if self.tree_cursor >= self.tree_nodes.len() {
+            return;
+        }
         if self.tree_nodes[self.tree_cursor].expanded {
             let depth = self.tree_nodes[self.tree_cursor].depth;
             let start = self.tree_cursor + 1;
-            let end   = self.tree_nodes[start..].iter()
+            let end = self.tree_nodes[start..]
+                .iter()
                 .position(|n| n.depth <= depth)
                 .map(|p| start + p)
                 .unwrap_or(self.tree_nodes.len());
@@ -487,16 +676,17 @@ impl App {
             let depth = self.tree_nodes[self.tree_cursor].depth;
             if depth > 0
                 && let Some(pi) = self.tree_nodes[..self.tree_cursor]
-                    .iter().rposition(|n| n.depth < depth)
-                {
-                    self.tree_cursor = pi;
-                    self.tree_clamp_offset(lh);
-                    let path = self.tree_nodes[pi].path.clone();
-                    self.current_dir = path;
-                    self.cursor = 0;
-                    let _ = self.load_entries();
-                    self.update_file_info();
-                }
+                    .iter()
+                    .rposition(|n| n.depth < depth)
+            {
+                self.tree_cursor = pi;
+                self.tree_clamp_offset(lh);
+                let path = self.tree_nodes[pi].path.clone();
+                self.current_dir = path;
+                self.cursor = 0;
+                let _ = self.load_entries();
+                self.update_file_info();
+            }
         }
     }
 
@@ -504,7 +694,9 @@ impl App {
 
     /// Returns tagged filenames (excluding ".."), or the cursor entry if none tagged.
     pub fn collect_op_targets(&self) -> Vec<String> {
-        let tagged: Vec<String> = self.entries.iter()
+        let tagged: Vec<String> = self
+            .entries
+            .iter()
             .zip(self.tagged.iter())
             .filter(|(e, t)| **t && e.name != "..")
             .map(|(e, _)| e.name.clone())
@@ -512,7 +704,11 @@ impl App {
         if !tagged.is_empty() {
             tagged
         } else if let Some(e) = self.entries.get(self.cursor) {
-            if e.name != ".." { vec![e.name.clone()] } else { Vec::new() }
+            if e.name != ".." {
+                vec![e.name.clone()]
+            } else {
+                Vec::new()
+            }
         } else {
             Vec::new()
         }
@@ -520,11 +716,18 @@ impl App {
 
     pub fn resolve_dest(&self, s: &str) -> PathBuf {
         let p = PathBuf::from(s);
-        if p.is_absolute() { p } else { self.current_dir.join(p) }
+        if p.is_absolute() {
+            p
+        } else {
+            self.current_dir.join(p)
+        }
     }
 
     fn process_copy_seq(
-        &self, files: &[String], dest: &std::path::Path, is_move: bool,
+        &self,
+        files: &[String],
+        dest: &std::path::Path,
+        is_move: bool,
         batch: Option<ConflictChoice>,
     ) -> Result<Option<OverwritePrompt>> {
         for (i, fname) in files.iter().enumerate() {
@@ -534,35 +737,51 @@ impl App {
                 match batch {
                     None => {
                         return Ok(Some(OverwritePrompt {
-                            dest:     dest.to_path_buf(),
+                            dest: dest.to_path_buf(),
                             conflict: fname.clone(),
-                            todo:     files[i + 1..].to_vec(),
+                            todo: files[i + 1..].to_vec(),
                             is_move,
-                            batch:    None,
+                            batch: None,
                         }));
                     }
                     Some(ConflictChoice::Overwrite) => {
-                        if is_move { move_path(&src, &dst)?; } else { copy_path(&src, &dst)?; }
+                        if is_move {
+                            move_path(&src, &dst)?;
+                        } else {
+                            copy_path(&src, &dst)?;
+                        }
                     }
                     Some(ConflictChoice::IfNewer) => {
                         if is_src_newer(&src, &dst) {
-                            if is_move { move_path(&src, &dst)?; } else { copy_path(&src, &dst)?; }
+                            if is_move {
+                                move_path(&src, &dst)?;
+                            } else {
+                                copy_path(&src, &dst)?;
+                            }
                         }
                     }
                     Some(ConflictChoice::Skip) => {}
                 }
-            } else if is_move { move_path(&src, &dst)?; } else { copy_path(&src, &dst)?; }
+            } else if is_move {
+                move_path(&src, &dst)?;
+            } else {
+                copy_path(&src, &dst)?;
+            }
         }
         Ok(None)
     }
 
-    pub fn begin_copy(&self, dest_str: &str, targets: &[String]) -> Result<Option<OverwritePrompt>> {
+    pub fn begin_copy(
+        &self,
+        dest_str: &str,
+        targets: &[String],
+    ) -> Result<Option<OverwritePrompt>> {
         let dest = self.resolve_dest(dest_str);
         fs::create_dir_all(&dest)?;
         for fname in targets {
             let src = self.current_dir.join(fname);
             if src.is_dir() {
-                let canon_src  = src.canonicalize().unwrap_or_else(|_| src.clone());
+                let canon_src = src.canonicalize().unwrap_or_else(|_| src.clone());
                 let canon_dest = dest.canonicalize().unwrap_or_else(|_| dest.clone());
                 if canon_dest.starts_with(&canon_src) {
                     anyhow::bail!("コピー先がコピー元の配下です: {}", fname);
@@ -572,7 +791,11 @@ impl App {
         self.process_copy_seq(targets, &dest, false, None)
     }
 
-    pub fn begin_move(&self, dest_str: &str, targets: &[String]) -> Result<Option<OverwritePrompt>> {
+    pub fn begin_move(
+        &self,
+        dest_str: &str,
+        targets: &[String],
+    ) -> Result<Option<OverwritePrompt>> {
         let dest = self.resolve_dest(dest_str);
         fs::create_dir_all(&dest)?;
         self.process_copy_seq(targets, &dest, true, None)
@@ -581,17 +804,24 @@ impl App {
     // ── Conflict resolution: apply choice to current conflict, continue ──
 
     fn resume_conflict(
-        &self, prompt: OverwritePrompt, choice: ConflictChoice, batch: Option<ConflictChoice>,
+        &self,
+        prompt: OverwritePrompt,
+        choice: ConflictChoice,
+        batch: Option<ConflictChoice>,
     ) -> Result<Option<OverwritePrompt>> {
         let src = self.current_dir.join(&prompt.conflict);
         let dst = prompt.dest.join(&prompt.conflict);
         let do_op = match choice {
-            ConflictChoice::IfNewer   => is_src_newer(&src, &dst),
+            ConflictChoice::IfNewer => is_src_newer(&src, &dst),
             ConflictChoice::Overwrite => true,
-            ConflictChoice::Skip      => false,
+            ConflictChoice::Skip => false,
         };
         if do_op {
-            if prompt.is_move { move_path(&src, &dst)?; } else { copy_path(&src, &dst)?; }
+            if prompt.is_move {
+                move_path(&src, &dst)?;
+            } else {
+                copy_path(&src, &dst)?;
+            }
         }
         self.process_copy_seq(&prompt.todo, &prompt.dest, prompt.is_move, batch)
     }
@@ -609,12 +839,26 @@ impl App {
         self.resume_conflict(prompt, ConflictChoice::Skip, None)
     }
     /// Shift+O: 上書き（以降全件）
-    pub fn resume_overwrite_batch(&self, prompt: OverwritePrompt) -> Result<Option<OverwritePrompt>> {
-        self.resume_conflict(prompt, ConflictChoice::Overwrite, Some(ConflictChoice::Overwrite))
+    pub fn resume_overwrite_batch(
+        &self,
+        prompt: OverwritePrompt,
+    ) -> Result<Option<OverwritePrompt>> {
+        self.resume_conflict(
+            prompt,
+            ConflictChoice::Overwrite,
+            Some(ConflictChoice::Overwrite),
+        )
     }
     /// Shift+U: タイムスタンプが新しい時のみ（以降全件）
-    pub fn resume_if_newer_batch(&self, prompt: OverwritePrompt) -> Result<Option<OverwritePrompt>> {
-        self.resume_conflict(prompt, ConflictChoice::IfNewer, Some(ConflictChoice::IfNewer))
+    pub fn resume_if_newer_batch(
+        &self,
+        prompt: OverwritePrompt,
+    ) -> Result<Option<OverwritePrompt>> {
+        self.resume_conflict(
+            prompt,
+            ConflictChoice::IfNewer,
+            Some(ConflictChoice::IfNewer),
+        )
     }
     /// Shift+N: スキップ（以降全件）
     pub fn resume_skip_batch(&self, prompt: OverwritePrompt) -> Result<Option<OverwritePrompt>> {
@@ -622,53 +866,83 @@ impl App {
     }
     /// C: 名前を変更して複写/移動
     pub fn resume_rename(
-        &self, new_name: &str, prompt: OverwritePrompt,
+        &self,
+        new_name: &str,
+        prompt: OverwritePrompt,
     ) -> Result<Option<OverwritePrompt>> {
         let n = new_name.trim();
-        if n.is_empty() { anyhow::bail!("名前が空です"); }
+        if n.is_empty() {
+            anyhow::bail!("名前が空です");
+        }
         let src = self.current_dir.join(&prompt.conflict);
         let dst = prompt.dest.join(n);
-        if dst.exists() { anyhow::bail!("\"{}\" は既に存在します", n); }
-        if prompt.is_move { move_path(&src, &dst)?; } else { copy_path(&src, &dst)?; }
+        if dst.exists() {
+            anyhow::bail!("\"{}\" は既に存在します", n);
+        }
+        if prompt.is_move {
+            move_path(&src, &dst)?;
+        } else {
+            copy_path(&src, &dst)?;
+        }
         self.process_copy_seq(&prompt.todo, &prompt.dest, prompt.is_move, prompt.batch)
     }
 
     pub fn exec_delete(&self, targets: &[String]) -> Result<()> {
         for fname in targets {
-            if fname == ".." { continue; }
+            if fname == ".." {
+                continue;
+            }
             let path = self.current_dir.join(fname);
-            if path.is_dir() { fs::remove_dir_all(&path)?; } else { fs::remove_file(&path)?; }
+            if path.is_dir() {
+                fs::remove_dir_all(&path)?;
+            } else {
+                fs::remove_file(&path)?;
+            }
         }
         Ok(())
     }
 
     pub fn exec_rename(&self, new_name: &str, targets: &[String]) -> Result<()> {
         let new = new_name.trim();
-        if new.is_empty() { anyhow::bail!("名前が空です"); }
+        if new.is_empty() {
+            anyhow::bail!("名前が空です");
+        }
         if let Some(fname) = targets.first()
-            && fname != ".." {
-                fs::rename(self.current_dir.join(fname), self.current_dir.join(new))?;
-            }
+            && fname != ".."
+        {
+            fs::rename(self.current_dir.join(fname), self.current_dir.join(new))?;
+        }
         Ok(())
     }
 
     pub fn exec_mkdir(&self, name: &str) -> Result<()> {
         let n = name.trim();
-        if n.is_empty() { anyhow::bail!("名前が空です"); }
+        if n.is_empty() {
+            anyhow::bail!("名前が空です");
+        }
         fs::create_dir_all(self.current_dir.join(n))?;
         Ok(())
     }
 
     /// 同ディレクトリへの複写: 新ファイル名を指定してコピー
-    pub fn exec_copy_newname(&self, new_name: &str, targets: &[String], dest_dir: &Path) -> Result<()> {
+    pub fn exec_copy_newname(
+        &self,
+        new_name: &str,
+        targets: &[String],
+        dest_dir: &Path,
+    ) -> Result<()> {
         let n = new_name.trim();
-        if n.is_empty() { anyhow::bail!("名前が空です"); }
+        if n.is_empty() {
+            anyhow::bail!("名前が空です");
+        }
         let src = match targets.first() {
             Some(f) => self.current_dir.join(f),
-            None    => anyhow::bail!("複写元ファイルが指定されていません"),
+            None => anyhow::bail!("複写元ファイルが指定されていません"),
         };
         let dst = dest_dir.join(n);
-        if dst.exists() { anyhow::bail!("\"{}\" は既に存在します", n); }
+        if dst.exists() {
+            anyhow::bail!("\"{}\" は既に存在します", n);
+        }
         copy_path(&src, &dst)?;
         Ok(())
     }
@@ -676,11 +950,15 @@ impl App {
     pub fn exec_attr(&self, perm_str: &str, targets: &[String]) -> Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let s = perm_str.trim();
-        if s.is_empty() { anyhow::bail!("権限が空です"); }
-        let mode = u32::from_str_radix(s, 8)
-            .map_err(|_| anyhow::anyhow!("無効なオクタル値: {}", s))?;
+        if s.is_empty() {
+            anyhow::bail!("権限が空です");
+        }
+        let mode =
+            u32::from_str_radix(s, 8).map_err(|_| anyhow::anyhow!("無効なオクタル値: {}", s))?;
         for fname in targets {
-            if fname == ".." { continue; }
+            if fname == ".." {
+                continue;
+            }
             let path = self.current_dir.join(fname);
             fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
         }
@@ -700,11 +978,19 @@ fn add_tree_node(
     let name = if depth == 0 {
         "/".to_string()
     } else {
-        path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
+        path.file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default()
     };
-    let expanded     = ancestors.contains(&path);
+    let expanded = ancestors.contains(&path);
     let has_children = tree_has_children(&path, show_hidden);
-    nodes.push(TreeNode { path: path.clone(), name, depth, expanded, has_children });
+    nodes.push(TreeNode {
+        path: path.clone(),
+        name,
+        depth,
+        expanded,
+        has_children,
+    });
     if expanded {
         for subpath in tree_list_subdirs(&path, show_hidden) {
             add_tree_node(nodes, subpath, depth + 1, ancestors, show_hidden);
@@ -726,8 +1012,17 @@ pub fn tree_build(current_dir: &PathBuf, show_hidden: bool) -> (Vec<TreeNode>, u
     ancestors.reverse();
     let ancestor_set: std::collections::HashSet<PathBuf> = ancestors.into_iter().collect();
     let mut nodes = Vec::new();
-    add_tree_node(&mut nodes, PathBuf::from("/"), 0, &ancestor_set, show_hidden);
-    let cursor = nodes.iter().position(|n| &n.path == current_dir).unwrap_or(0);
+    add_tree_node(
+        &mut nodes,
+        PathBuf::from("/"),
+        0,
+        &ancestor_set,
+        show_hidden,
+    );
+    let cursor = nodes
+        .iter()
+        .position(|n| &n.path == current_dir)
+        .unwrap_or(0);
     (nodes, cursor)
 }
 
@@ -736,16 +1031,17 @@ pub fn tree_build(current_dir: &PathBuf, show_hidden: bool) -> (Vec<TreeNode>, u
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{ColorsConfig, LABELS_JA, UiColors};
     use tempfile::tempdir;
-    use crate::config::{ColorsConfig, UiColors, LABELS_JA};
 
     /// テスト用の最小構成 App を指定ディレクトリで生成する。
     fn make_test_app(dir: PathBuf) -> App {
         let ui_colors = UiColors::from_config(&ColorsConfig::default());
         let keymap = build_keymap(&HashMap::new());
-        let menu_items = MENU_ACTIONS.iter().map(|&(action, label_ja, _)| {
-            (key_label(&keymap, action), label_ja.to_string())
-        }).collect();
+        let menu_items = MENU_ACTIONS
+            .iter()
+            .map(|&(action, label_ja, _)| (key_label(&keymap, action), label_ja.to_string()))
+            .collect();
         let mut app = App {
             current_dir: dir,
             entries: Vec::new(),
@@ -772,8 +1068,8 @@ mod tests {
             lang_en: false,
             keymap,
             menu_items,
-            error_msg:   None,
-            run_dialog:  None,
+            error_msg: None,
+            run_dialog: None,
             file_dialog: None,
             show_hidden: false,
             pager: "less".to_string(),
@@ -783,6 +1079,10 @@ mod tests {
         app.load_entries().unwrap();
         app.update_file_info();
         app
+    }
+
+    fn canonical(path: &std::path::Path) -> PathBuf {
+        path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
     }
 
     // ── load_entries ───────────────────────────────────────────────────
@@ -815,11 +1115,16 @@ mod tests {
     fn test_load_entries_alphabetical_sort() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("charlie.txt"), "").unwrap();
-        std::fs::write(dir.path().join("alpha.txt"),   "").unwrap();
-        std::fs::write(dir.path().join("bravo.txt"),   "").unwrap();
+        std::fs::write(dir.path().join("alpha.txt"), "").unwrap();
+        std::fs::write(dir.path().join("bravo.txt"), "").unwrap();
 
         let app = make_test_app(dir.path().to_path_buf());
-        let names: Vec<&str> = app.entries.iter().skip(1).map(|e| e.name.as_str()).collect();
+        let names: Vec<&str> = app
+            .entries
+            .iter()
+            .skip(1)
+            .map(|e| e.name.as_str())
+            .collect();
         assert_eq!(names, vec!["alpha.txt", "bravo.txt", "charlie.txt"]);
     }
 
@@ -827,11 +1132,11 @@ mod tests {
     fn test_load_entries_hides_dotfiles_by_default() {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("visible.txt"), "").unwrap();
-        std::fs::write(dir.path().join(".hidden"),     "").unwrap();
+        std::fs::write(dir.path().join(".hidden"), "").unwrap();
 
         let app = make_test_app(dir.path().to_path_buf());
         let names: Vec<&str> = app.entries.iter().map(|e| e.name.as_str()).collect();
-        assert!( names.contains(&"visible.txt"));
+        assert!(names.contains(&"visible.txt"));
         assert!(!names.contains(&".hidden"));
     }
 
@@ -865,7 +1170,7 @@ mod tests {
     #[test]
     fn test_current_total_bytes() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("a.txt"), "hello").unwrap();  // 5 bytes
+        std::fs::write(dir.path().join("a.txt"), "hello").unwrap(); // 5 bytes
         std::fs::write(dir.path().join("b.txt"), "world!").unwrap(); // 6 bytes
 
         let app = make_test_app(dir.path().to_path_buf());
@@ -916,7 +1221,7 @@ mod tests {
         app.cursor = 1;
         assert!(!app.tagged[1]);
         app.tag_toggle();
-        assert!( app.tagged[1]);
+        assert!(app.tagged[1]);
         app.tag_toggle();
         assert!(!app.tagged[1]);
     }
@@ -930,7 +1235,8 @@ mod tests {
         let mut app = make_test_app(dir.path().to_path_buf());
         // 全タグ OFF → 全タグ ON
         app.tag_all();
-        assert!(app.tagged.iter().all(|&t| t));
+        assert!(!app.tagged[0]);
+        assert!(app.tagged[1..].iter().all(|&t| t));
         // 全タグ ON → 全タグ OFF
         app.tag_all();
         assert!(app.tagged.iter().all(|&t| !t));
@@ -945,8 +1251,19 @@ mod tests {
         let mut app = make_test_app(dir.path().to_path_buf());
         app.cursor = 0;
         app.tag_toggle_move(10);
-        assert!( app.tagged[0]); // タグが立つ
+        assert!(!app.tagged[0]); // ".." はタグ対象外
         assert_eq!(app.cursor, 1); // カーソルが進む
+    }
+
+    #[test]
+    fn test_tag_toggle_ignores_dotdot() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("foo.txt"), "").unwrap();
+
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.cursor = 0;
+        app.tag_toggle();
+        assert!(!app.tagged[0]);
     }
 
     // ── カーソル移動 ───────────────────────────────────────────────────
@@ -1011,10 +1328,18 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut app = make_test_app(dir.path().to_path_buf());
 
-        app.col_mode = 1; assert_eq!(app.cols(), 1); assert_eq!(app.per_page(10), 10);
-        app.col_mode = 2; assert_eq!(app.cols(), 2); assert_eq!(app.per_page(10), 20);
-        app.col_mode = 3; assert_eq!(app.cols(), 3); assert_eq!(app.per_page(10), 30);
-        app.col_mode = 5; assert_eq!(app.cols(), 5); assert_eq!(app.per_page(10), 50);
+        app.col_mode = 1;
+        assert_eq!(app.cols(), 1);
+        assert_eq!(app.per_page(10), 10);
+        app.col_mode = 2;
+        assert_eq!(app.cols(), 2);
+        assert_eq!(app.per_page(10), 20);
+        app.col_mode = 3;
+        assert_eq!(app.cols(), 3);
+        assert_eq!(app.per_page(10), 30);
+        app.col_mode = 5;
+        assert_eq!(app.cols(), 5);
+        assert_eq!(app.per_page(10), 50);
     }
 
     // ── tree_build ─────────────────────────────────────────────────────
@@ -1022,12 +1347,13 @@ mod tests {
     #[test]
     fn test_tree_build_root_node() {
         let dir = tempdir().unwrap();
+        let dir = canonical(dir.path());
         // tempfile が作るディレクトリは /tmp/.tmpXXX のように隠しディレクトリに
         // なることがあるため show_hidden=true で確実に祖先パスを辿れるようにする
-        let (nodes, cursor) = tree_build(&dir.path().to_path_buf(), true);
-        assert_eq!(nodes[0].name,  "/");
+        let (nodes, cursor) = tree_build(&dir, true);
+        assert_eq!(nodes[0].name, "/");
         assert_eq!(nodes[0].depth, 0);
-        assert_eq!(nodes[cursor].path, dir.path().to_path_buf());
+        assert_eq!(nodes[cursor].path, dir);
     }
 
     // ── collect_op_targets ─────────────────────────────────────────────
@@ -1089,10 +1415,16 @@ mod tests {
     fn test_exec_delete_permission_error_propagated() {
         use std::os::unix::fs::PermissionsExt;
         // root は権限を無視するのでスキップ
-        let uid: u32 = std::process::Command::new("id").arg("-u").output()
-            .ok().and_then(|o| String::from_utf8(o.stdout).ok())
-            .and_then(|s| s.trim().parse().ok()).unwrap_or(1);
-        if uid == 0 { return; }
+        let uid: u32 = std::process::Command::new("id")
+            .arg("-u")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or(1);
+        if uid == 0 {
+            return;
+        }
 
         let dir = tempdir().unwrap();
         let sub = dir.path().join("sub");
@@ -1126,7 +1458,8 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("old.txt"), "x").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
-        app.exec_rename("new.txt", &["old.txt".to_string()]).unwrap();
+        app.exec_rename("new.txt", &["old.txt".to_string()])
+            .unwrap();
         assert!(!dir.path().join("old.txt").exists());
         assert!(dir.path().join("new.txt").exists());
     }
@@ -1187,7 +1520,9 @@ mod tests {
         std::fs::write(dir.path().join("a.txt"), b"hello").unwrap();
         let dst_dir = dir.path().join("dst");
         let app = make_test_app(dir.path().to_path_buf());
-        let r = app.begin_copy(&dst_dir.to_string_lossy(), &["a.txt".to_string()]).unwrap();
+        let r = app
+            .begin_copy(&dst_dir.to_string_lossy(), &["a.txt".to_string()])
+            .unwrap();
         assert!(r.is_none()); // no conflict
         assert_eq!(std::fs::read(dst_dir.join("a.txt")).unwrap(), b"hello");
         assert!(dir.path().join("a.txt").exists()); // original still there
@@ -1201,7 +1536,9 @@ mod tests {
         std::fs::write(sub.join("f.txt"), b"x").unwrap();
         let dst_dir = dir.path().join("dst");
         let app = make_test_app(dir.path().to_path_buf());
-        let r = app.begin_copy(&dst_dir.to_string_lossy(), &["src_dir".to_string()]).unwrap();
+        let r = app
+            .begin_copy(&dst_dir.to_string_lossy(), &["src_dir".to_string()])
+            .unwrap();
         assert!(r.is_none());
         assert!(dst_dir.join("src_dir").join("f.txt").exists());
     }
@@ -1214,7 +1551,9 @@ mod tests {
         std::fs::create_dir(&dst_dir).unwrap();
         std::fs::write(dst_dir.join("a.txt"), b"existing").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
-        let r = app.begin_copy(&dst_dir.to_string_lossy(), &["a.txt".to_string()]).unwrap();
+        let r = app
+            .begin_copy(&dst_dir.to_string_lossy(), &["a.txt".to_string()])
+            .unwrap();
         assert!(r.is_some());
         let prompt = r.unwrap();
         assert_eq!(prompt.conflict, "a.txt");
@@ -1237,8 +1576,19 @@ mod tests {
 
     // ── resume_overwrite / resume_if_newer / resume_skip / batch / rename ──
 
-    fn make_conflict_prompt(dst_dir: &std::path::Path, conflict: &str, todo: Vec<String>, is_move: bool) -> OverwritePrompt {
-        OverwritePrompt { dest: dst_dir.to_path_buf(), conflict: conflict.to_string(), todo, is_move, batch: None }
+    fn make_conflict_prompt(
+        dst_dir: &std::path::Path,
+        conflict: &str,
+        todo: Vec<String>,
+        is_move: bool,
+    ) -> OverwritePrompt {
+        OverwritePrompt {
+            dest: dst_dir.to_path_buf(),
+            conflict: conflict.to_string(),
+            todo,
+            is_move,
+            batch: None,
+        }
     }
 
     #[test]
@@ -1310,7 +1660,7 @@ mod tests {
         std::fs::create_dir(&dst_dir).unwrap();
         // write old dst first, then new src
         std::fs::write(dst_dir.join("a.txt"), b"old").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         std::fs::write(dir.path().join("a.txt"), b"new").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
         let prompt = make_conflict_prompt(&dst_dir, "a.txt", vec![], false);
@@ -1326,7 +1676,7 @@ mod tests {
         std::fs::create_dir(&dst_dir).unwrap();
         // write new dst first, then old src
         std::fs::write(dir.path().join("a.txt"), b"old").unwrap();
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(1100));
         std::fs::write(dst_dir.join("a.txt"), b"newer").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
         let prompt = make_conflict_prompt(&dst_dir, "a.txt", vec![], false);
@@ -1388,7 +1738,12 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("orig.txt"), b"data").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
-        app.exec_copy_newname("copy.txt", &["orig.txt".to_string()], &dir.path().to_path_buf()).unwrap();
+        app.exec_copy_newname(
+            "copy.txt",
+            &["orig.txt".to_string()],
+            &dir.path().to_path_buf(),
+        )
+        .unwrap();
         assert!(dir.path().join("orig.txt").exists()); // 元は残る
         assert_eq!(std::fs::read(dir.path().join("copy.txt")).unwrap(), b"data");
     }
@@ -1399,7 +1754,11 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("orig.txt"), b"data").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
-        let result = app.exec_copy_newname("orig.txt", &["orig.txt".to_string()], &dir.path().to_path_buf());
+        let result = app.exec_copy_newname(
+            "orig.txt",
+            &["orig.txt".to_string()],
+            &dir.path().to_path_buf(),
+        );
         assert!(result.is_err(), "同名コピーはエラーになること");
         // 元ファイルが壊れていないこと
         assert_eq!(std::fs::read(dir.path().join("orig.txt")).unwrap(), b"data");
@@ -1412,10 +1771,17 @@ mod tests {
         std::fs::write(dir.path().join("src.txt"), b"src").unwrap();
         std::fs::write(dir.path().join("existing.txt"), b"existing").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
-        let result = app.exec_copy_newname("existing.txt", &["src.txt".to_string()], &dir.path().to_path_buf());
+        let result = app.exec_copy_newname(
+            "existing.txt",
+            &["src.txt".to_string()],
+            &dir.path().to_path_buf(),
+        );
         assert!(result.is_err());
         // 既存ファイルが上書きされていないこと
-        assert_eq!(std::fs::read(dir.path().join("existing.txt")).unwrap(), b"existing");
+        assert_eq!(
+            std::fs::read(dir.path().join("existing.txt")).unwrap(),
+            b"existing"
+        );
     }
 
     #[test]
@@ -1423,7 +1789,10 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::write(dir.path().join("orig.txt"), "").unwrap();
         let app = make_test_app(dir.path().to_path_buf());
-        assert!(app.exec_copy_newname("  ", &["orig.txt".to_string()], &dir.path().to_path_buf()).is_err());
+        assert!(
+            app.exec_copy_newname("  ", &["orig.txt".to_string()], &dir.path().to_path_buf())
+                .is_err()
+        );
     }
 
     // ── begin_move ─────────────────────────────────────────────────────
@@ -1434,7 +1803,9 @@ mod tests {
         std::fs::write(dir.path().join("f.txt"), b"data").unwrap();
         let dst_dir = dir.path().join("dst");
         let app = make_test_app(dir.path().to_path_buf());
-        let r = app.begin_move(&dst_dir.to_string_lossy(), &["f.txt".to_string()]).unwrap();
+        let r = app
+            .begin_move(&dst_dir.to_string_lossy(), &["f.txt".to_string()])
+            .unwrap();
         assert!(r.is_none());
         assert!(!dir.path().join("f.txt").exists());
         assert_eq!(std::fs::read(dst_dir.join("f.txt")).unwrap(), b"data");
@@ -1445,12 +1816,16 @@ mod tests {
     #[test]
     fn test_enter_dir_permission_denied_rolls_back() {
         // root はパーミッション制限を無視するためスキップ
-        let is_root = std::process::Command::new("id").arg("-u").output()
+        let is_root = std::process::Command::new("id")
+            .arg("-u")
+            .output()
             .ok()
             .and_then(|o| String::from_utf8(o.stdout).ok())
             .and_then(|s| s.trim().parse::<u32>().ok())
             == Some(0);
-        if is_root { return; }
+        if is_root {
+            return;
+        }
         use std::os::unix::fs::PermissionsExt;
         let dir = tempdir().unwrap();
         let sub = dir.path().join("locked");
@@ -1464,8 +1839,14 @@ mod tests {
         // パーミッションを戻してから assert（後片付け保証）
         std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        assert!(result.is_err(), "enter_dir should fail on permission-denied directory");
-        assert_eq!(app.current_dir, original_dir, "current_dir should be rolled back on failure");
+        assert!(
+            result.is_err(),
+            "enter_dir should fail on permission-denied directory"
+        );
+        assert_eq!(
+            app.current_dir, original_dir,
+            "current_dir should be rolled back on failure"
+        );
     }
 
     #[test]
@@ -1480,19 +1861,58 @@ mod tests {
         std::fs::remove_dir(&sub).unwrap();
         app.reload();
 
-        assert!(app.error_msg.is_some(), "reload() should set error_msg when directory no longer exists");
+        assert!(
+            app.error_msg.is_some(),
+            "reload() should set error_msg when directory no longer exists"
+        );
     }
 
     #[test]
     fn test_tree_rebuild_updates_nodes() {
         let dir = tempdir().unwrap();
         std::fs::create_dir(dir.path().join("sub")).unwrap();
+        let dir = canonical(dir.path());
 
-        let mut app = make_test_app(dir.path().to_path_buf());
+        let mut app = make_test_app(dir.clone());
         app.show_hidden = true; // 同上: 隠しパスを確実に辿るため
         assert!(app.tree_nodes.is_empty());
         app.tree_rebuild();
         assert!(!app.tree_nodes.is_empty());
-        assert_eq!(app.tree_nodes[app.tree_cursor].path, dir.path().to_path_buf());
+        assert_eq!(app.tree_nodes[app.tree_cursor].path, dir);
+    }
+
+    #[test]
+    fn test_system_symlink_dirs_are_enterable() {
+        for name in ["tmp", "etc"] {
+            let path = PathBuf::from("/").join(name);
+            if !path.exists()
+                || !std::fs::symlink_metadata(&path)
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let mut app = make_test_app(PathBuf::from("/"));
+            let idx = app.entries.iter().position(|e| e.name == name).unwrap();
+            assert!(
+                app.entries[idx].is_link,
+                "{} should be recognized as symlink",
+                name
+            );
+            assert!(
+                app.entries[idx].is_dir,
+                "{} should be treated as enterable directory",
+                name
+            );
+
+            app.enter_dir(name).unwrap();
+            assert_eq!(app.current_dir, PathBuf::from("/").join(name));
+            assert!(
+                !app.entries.is_empty(),
+                "{} target should be readable after enter",
+                name
+            );
+        }
     }
 }

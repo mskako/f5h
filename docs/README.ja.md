@@ -54,6 +54,7 @@ cp target/release/f5h ~/.local/bin/
 | `J` | ディレクトリジャンプ *(未実装)* |
 
 矢印キーは常に hjkl の別名です（設定での変更不可）。上記以外のキーはすべて `~/.config/f5h/config.toml` の `[keys]` セクションで変更できます。
+ディレクトリを指す symlink には `Enter` でそのまま入れます。ファイル情報欄には symlink のリンク先が表示されます。
 
 ### 複写・移動の競合ダイアログ
 
@@ -94,6 +95,8 @@ title  = "yellow"      # セクションタイトル
 label  = "cyan"        # フィールドラベル（原作のインフォメーション・タイトルに相当）
 unit   = "cyan"        # 単位 (Gi / Ki / %)
 date   = "white"       # タイムスタンプ・時計
+clock  = "white"       # 右上の時計
+ls_colors = ""         # Linux では $LS_COLORS、macOS では $LSCOLORS を使用
 
 [programs]
 editor = "vim"         # $EDITOR → nano にフォールバック
@@ -105,6 +108,7 @@ mp4    = "mpv"
 ```
 
 キーバインドのカスタマイズや色の詳細な指定方法は [README.md](../README.md) を参照してください。
+色分けは GNU/Linux では `LS_COLORS`、macOS では `LSCOLORS` を参照します。
 
 ## 今後の予定
 
