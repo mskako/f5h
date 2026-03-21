@@ -12,7 +12,7 @@ use std::{
 };
 #[cfg(unix)]
 use std::{
-    ffi::{CStr, CString},
+    ffi::CString,
     os::unix::ffi::OsStrExt,
 };
 
@@ -73,7 +73,7 @@ pub fn now_str() -> String {
 // ── Disk / volume ──────────────────────────────────────────────────────
 
 /// Returns (total, used, avail) in bytes.
-pub fn disk_stats(path: &PathBuf) -> (u64, u64, u64) {
+pub fn disk_stats(path: &Path) -> (u64, u64, u64) {
     #[cfg(unix)]
     {
         let path_c = match CString::new(path.as_os_str().as_bytes()) {
@@ -90,11 +90,11 @@ pub fn disk_stats(path: &PathBuf) -> (u64, u64, u64) {
             st.f_frsize
         } else {
             st.f_bsize
-        } as u64;
-        let total = (st.f_blocks as u64).saturating_mul(block_size);
+        };
+        let total = st.f_blocks.saturating_mul(block_size);
         let used =
-            ((st.f_blocks as u64).saturating_sub(st.f_bfree as u64)).saturating_mul(block_size);
-        let avail = (st.f_bavail as u64).saturating_mul(block_size);
+            (st.f_blocks.saturating_sub(st.f_bfree)).saturating_mul(block_size);
+        let avail = st.f_bavail.saturating_mul(block_size);
         (total, used, avail)
     }
     #[cfg(not(unix))]
@@ -104,7 +104,7 @@ pub fn disk_stats(path: &PathBuf) -> (u64, u64, u64) {
     }
 }
 
-pub fn get_volume_info(path: &PathBuf) -> String {
+pub fn get_volume_info(path: &Path) -> String {
     #[cfg(target_os = "macos")]
     {
         let path_c = match CString::new(path.as_os_str().as_bytes()) {
