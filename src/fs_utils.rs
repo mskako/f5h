@@ -88,14 +88,11 @@ pub fn disk_stats(path: &Path) -> (u64, u64, u64) {
             return (0, 0, 0);
         }
         let st = unsafe { st.assume_init() };
-        let block_size = if st.f_frsize > 0 {
-            st.f_frsize
-        } else {
-            st.f_bsize
-        };
+        // f_frsize/f_bsize are u32 on macOS, u64 on Linux — cast is needed on macOS
+        #[allow(clippy::unnecessary_cast)]
+        let block_size = if st.f_frsize > 0 { st.f_frsize as u64 } else { st.f_bsize as u64 };
         let total = st.f_blocks.saturating_mul(block_size);
-        let used =
-            (st.f_blocks.saturating_sub(st.f_bfree)).saturating_mul(block_size);
+        let used  = st.f_blocks.saturating_sub(st.f_bfree).saturating_mul(block_size);
         let avail = st.f_bavail.saturating_mul(block_size);
         (total, used, avail)
     }
