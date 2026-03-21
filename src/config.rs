@@ -88,7 +88,7 @@ impl UiColors {
             label: mk(&c.label, Color::Cyan),
             unit: mk(&c.unit, Color::Cyan),
             date: mk(&c.date, Color::White),
-            clock: mk(&c.clock, Color::White),
+            clock: mk(&c.clock, Color::Yellow),
         }
     }
 }

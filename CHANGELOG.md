@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-03-21
+
 ### Added
 
 - macOS `LSCOLORS` support as a fallback when `LS_COLORS` is not set
@@ -13,6 +15,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Clock display color changed from white to yellow (default)
 - Replaced `df`-based volume size detection with `statvfs`
 - Replaced `df`-based volume source/filesystem detection with `statfs` on macOS and `/proc/self/mountinfo` parsing on Linux
 - Treated symlinks to directories as enterable directories while keeping symlink-specific file info display
@@ -24,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Symlink file info no longer depends on platform-specific `file` output for directory links such as `/tmp`
 - `if-newer` tests no longer rely on sub-second filesystem timestamp resolution
+- Fixed statvfs field type mismatch on macOS (all fields cast to u64)
 
 ## [0.1.0] - 2026-03-20
 
