@@ -30,10 +30,9 @@ fn main() -> Result<()> {
 
         terminal.draw(|f| ui::ui(f, &app))?;
 
-        if event::poll(Duration::from_millis(500))?
-            && let Event::Key(key) = event::read()?
-            && key.kind == KeyEventKind::Press
-        {
+        if !event::poll(Duration::from_millis(500))? { continue; }
+        let Event::Key(key) = event::read()? else { continue; };
+        if key.kind == KeyEventKind::Press {
             // エラーダイアログ表示中は任意のキーで閉じる
             if app.error_msg.is_some() {
                 app.error_msg = None;
@@ -55,17 +54,15 @@ fn main() -> Result<()> {
                         }
                     }
                     (KeyCode::Left, _) => {
-                        if let Some(ref mut d) = app.run_dialog
-                            && d.cursor > 0
-                        {
-                            d.cursor -= 1;
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.run_dialog {
+                            if d.cursor > 0 { d.cursor -= 1; }
                         }
                     }
                     (KeyCode::Right, _) => {
-                        if let Some(ref mut d) = app.run_dialog
-                            && d.cursor < d.input.len()
-                        {
-                            d.cursor += 1;
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.run_dialog {
+                            if d.cursor < d.input.len() { d.cursor += 1; }
                         }
                     }
                     (KeyCode::Home, _) => {
@@ -79,18 +76,18 @@ fn main() -> Result<()> {
                         }
                     }
                     (KeyCode::Backspace, _) => {
-                        if let Some(ref mut d) = app.run_dialog
-                            && d.cursor > 0
-                        {
-                            d.cursor -= 1;
-                            d.input.remove(d.cursor);
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.run_dialog {
+                            if d.cursor > 0 {
+                                d.cursor -= 1;
+                                d.input.remove(d.cursor);
+                            }
                         }
                     }
                     (KeyCode::Delete, _) => {
-                        if let Some(ref mut d) = app.run_dialog
-                            && d.cursor < d.input.len()
-                        {
-                            d.input.remove(d.cursor);
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.run_dialog {
+                            if d.cursor < d.input.len() { d.input.remove(d.cursor); }
                         }
                     }
                     (KeyCode::Char(c), KeyModifiers::NONE)

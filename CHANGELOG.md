@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Run dialog (`:`) now shows "--- Press any key to continue ---" after command execution, accepting any key via raw mode
+
+### Fixed
+
+- Run dialog now uses the currently displayed directory as working directory instead of the f5h launch directory
+- Git status M/A/? marks now appear correctly on files when navigated into subdirectories
+
 ## [0.1.1] - 2026-03-21
 
 ### Added

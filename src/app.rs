@@ -674,18 +674,20 @@ impl App {
             self.tree_nodes.drain(start..end);
         } else {
             let depth = self.tree_nodes[self.tree_cursor].depth;
-            if depth > 0
-                && let Some(pi) = self.tree_nodes[..self.tree_cursor]
+            #[allow(clippy::collapsible_if)]
+            if depth > 0 {
+                if let Some(pi) = self.tree_nodes[..self.tree_cursor]
                     .iter()
                     .rposition(|n| n.depth < depth)
-            {
-                self.tree_cursor = pi;
-                self.tree_clamp_offset(lh);
-                let path = self.tree_nodes[pi].path.clone();
-                self.current_dir = path;
-                self.cursor = 0;
-                let _ = self.load_entries();
-                self.update_file_info();
+                {
+                    self.tree_cursor = pi;
+                    self.tree_clamp_offset(lh);
+                    let path = self.tree_nodes[pi].path.clone();
+                    self.current_dir = path;
+                    self.cursor = 0;
+                    let _ = self.load_entries();
+                    self.update_file_info();
+                }
             }
         }
     }
