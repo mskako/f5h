@@ -139,9 +139,7 @@ pub fn ls_style(e: &FileEntry, colors: &std::collections::HashMap<String, Style>
     if e.mode & 0o111 != 0 {
         return colors.get("ex").copied().unwrap_or(fallback);
     }
-    if let Some(dot) = e.name.rfind('.')
-        && dot > 0
-    {
+    if let Some(dot) = e.name.rfind('.').filter(|&d| d > 0) {
         let ext = e.name[dot + 1..].to_lowercase();
         if let Some(s) = colors.get(&format!("ext:{}", ext)) {
             return *s;

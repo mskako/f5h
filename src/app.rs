@@ -909,9 +909,7 @@ impl App {
         if new.is_empty() {
             anyhow::bail!("名前が空です");
         }
-        if let Some(fname) = targets.first()
-            && fname != ".."
-        {
+        if let Some(fname) = targets.first().filter(|f| *f != "..") {
             fs::rename(self.current_dir.join(fname), self.current_dir.join(new))?;
         }
         Ok(())

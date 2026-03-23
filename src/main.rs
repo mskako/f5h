@@ -535,9 +535,7 @@ fn main() -> Result<()> {
                         app.run_dialog = Some(RunDialog { input, cursor: 0 });
                     }
                     Action::Edit => {
-                        if let Some(e) = app.entries.get(app.cursor)
-                            && !e.is_dir
-                        {
+                        if let Some(e) = app.entries.get(app.cursor).filter(|e| !e.is_dir) {
                             let path = app.current_dir.join(&e.name);
                             match open_in_program(&app.editor, &path) {
                                 Ok(()) => terminal.clear()?,
