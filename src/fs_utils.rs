@@ -4,6 +4,8 @@ use crossterm::{
     ExecutableCommand,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+#[cfg(target_os = "macos")]
+use std::ffi::CStr;
 use std::{
     collections::HashMap,
     fs,
@@ -11,12 +13,7 @@ use std::{
     path::{Path, PathBuf},
 };
 #[cfg(unix)]
-use std::{
-    ffi::CString,
-    os::unix::ffi::OsStrExt,
-};
-#[cfg(target_os = "macos")]
-use std::ffi::CStr;
+use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 // ── Date / time ────────────────────────────────────────────────────────
 
@@ -91,11 +88,17 @@ pub fn disk_stats(path: &Path) -> (u64, u64, u64) {
         // All statvfs fields are u32 on macOS and u64 on Linux.
         // Cast everything to u64 explicitly; the cast is a no-op on Linux.
         #[allow(clippy::unnecessary_cast)]
-        let block_size = if st.f_frsize > 0 { st.f_frsize as u64 } else { st.f_bsize as u64 };
+        let block_size = if st.f_frsize > 0 {
+            st.f_frsize as u64
+        } else {
+            st.f_bsize as u64
+        };
         #[allow(clippy::unnecessary_cast)]
         let total = (st.f_blocks as u64).saturating_mul(block_size);
         #[allow(clippy::unnecessary_cast)]
-        let used  = (st.f_blocks as u64).saturating_sub(st.f_bfree as u64).saturating_mul(block_size);
+        let used = (st.f_blocks as u64)
+            .saturating_sub(st.f_bfree as u64)
+            .saturating_mul(block_size);
         #[allow(clippy::unnecessary_cast)]
         let avail = (st.f_bavail as u64).saturating_mul(block_size);
         (total, used, avail)
@@ -259,7 +262,12 @@ pub fn get_git_status(path: &Path) -> HashMap<String, char> {
 
     // Resolve git root so paths in --porcelain output are unambiguous
     let Ok(root_out) = std::process::Command::new("git")
-        .args(["-C", &path.to_string_lossy(), "rev-parse", "--show-toplevel"])
+        .args([
+            "-C",
+            &path.to_string_lossy(),
+            "rev-parse",
+            "--show-toplevel",
+        ])
         .output()
     else {
         return map;
@@ -270,7 +278,8 @@ pub fn get_git_status(path: &Path) -> HashMap<String, char> {
     let root = PathBuf::from(String::from_utf8_lossy(&root_out.stdout).trim());
 
     // Prefix to strip: relative path from root to path, e.g. "src/"
-    let prefix = path.strip_prefix(&root)
+    let prefix = path
+        .strip_prefix(&root)
         .ok()
         .filter(|p| !p.as_os_str().is_empty())
         .map(|p| format!("{}/", p.display()));
@@ -302,7 +311,11 @@ pub fn get_git_status(path: &Path) -> HashMap<String, char> {
             continue;
         }
         let name = line[3..].trim_matches('"');
-        let name = if let Some(i) = name.find(" -> ") { &name[i + 4..] } else { name };
+        let name = if let Some(i) = name.find(" -> ") {
+            &name[i + 4..]
+        } else {
+            name
+        };
 
         // Strip directory prefix; skip entries outside current directory
         let name = match &prefix {

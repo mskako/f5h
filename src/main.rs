@@ -17,11 +17,12 @@ use fs_utils::{open_in_program, run_command, shell_quote};
 use ui::HEADER_ROWS;
 
 fn main() -> Result<()> {
+    let config = load_config();
+
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
     let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
 
-    let config = load_config();
     let mut app = App::new(config)?;
 
     while !app.quit {

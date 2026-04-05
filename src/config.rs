@@ -169,10 +169,16 @@ pub fn load_config() -> Config {
         .map(PathBuf::from)
         .unwrap_or_default()
         .join(".config/f5h/config.toml");
-    fs::read_to_string(path)
-        .ok()
-        .and_then(|s| toml::from_str(&s).ok())
-        .unwrap_or_default()
+    match fs::read_to_string(&path) {
+        Ok(s) => match toml::from_str(&s) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("warning: failed to parse {}: {}", path.display(), e);
+                Config::default()
+            }
+        },
+        Err(_) => Config::default(),
+    }
 }
 
 // ── Actions / Keymap ──────────────────────────────────────────────────
