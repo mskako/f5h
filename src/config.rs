@@ -295,6 +295,29 @@ pub fn parse_key_str(s: &str) -> Option<(KeyCode, KeyModifiers)> {
 
 pub type KeyMap = HashMap<(KeyCode, KeyModifiers), Action>;
 
+pub fn lookup_action(keymap: &KeyMap, code: KeyCode, modifiers: KeyModifiers) -> Option<Action> {
+    if let Some(&action) = keymap.get(&(code, modifiers)) {
+        return Some(action);
+    }
+
+    if modifiers == KeyModifiers::SHIFT
+        && let KeyCode::Char(c) = code
+    {
+        if let Some(&action) = keymap.get(&(KeyCode::Char(c), KeyModifiers::NONE)) {
+            return Some(action);
+        }
+        if c.is_ascii_uppercase() {
+            if let Some(&action) =
+                keymap.get(&(KeyCode::Char(c.to_ascii_lowercase()), KeyModifiers::SHIFT))
+            {
+                return Some(action);
+            }
+        }
+    }
+
+    None
+}
+
 pub fn build_keymap(cfg_keys: &HashMap<String, String>) -> KeyMap {
     let defaults: &[(&str, &str)] = &[
         ("move_up", "k"),
@@ -555,5 +578,23 @@ mod tests {
     fn test_parse_file_colors_switches_by_format() {
         assert!(parse_file_colors("di=01;34").contains_key("di"));
         assert!(parse_file_colors("ExfxcxdxCxegedabagacad").contains_key("di"));
+    }
+
+    #[test]
+    fn test_lookup_action_falls_back_from_shifted_uppercase() {
+        let mut keymap = KeyMap::new();
+        keymap.insert((KeyCode::Char('G'), KeyModifiers::NONE), Action::LastEntry);
+
+        let action = lookup_action(&keymap, KeyCode::Char('G'), KeyModifiers::SHIFT);
+        assert_eq!(action, Some(Action::LastEntry));
+    }
+
+    #[test]
+    fn test_lookup_action_falls_back_from_shifted_symbol() {
+        let mut keymap = KeyMap::new();
+        keymap.insert((KeyCode::Char('!'), KeyModifiers::NONE), Action::ColMode1);
+
+        let action = lookup_action(&keymap, KeyCode::Char('!'), KeyModifiers::SHIFT);
+        assert_eq!(action, Some(Action::ColMode1));
     }
 }

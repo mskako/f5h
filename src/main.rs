@@ -12,7 +12,7 @@ use crossterm::{
 use std::{io::stdout, path::PathBuf, time::Duration};
 
 use app::{App, DialogKind, FileDialog, RunDialog};
-use config::{Action, load_config};
+use config::{Action, load_config, lookup_action};
 use fs_utils::{open_in_program, run_command, shell_quote};
 use ui::HEADER_ROWS;
 
@@ -31,8 +31,12 @@ fn main() -> Result<()> {
 
         terminal.draw(|f| ui::ui(f, &app))?;
 
-        if !event::poll(Duration::from_millis(500))? { continue; }
-        let Event::Key(key) = event::read()? else { continue; };
+        if !event::poll(Duration::from_millis(500))? {
+            continue;
+        }
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
         if key.kind == KeyEventKind::Press {
             // エラーダイアログ表示中は任意のキーで閉じる
             if app.error_msg.is_some() {
@@ -54,16 +58,22 @@ fn main() -> Result<()> {
                             }
                         }
                     }
-                    (KeyCode::Left, _) => {
+                    (KeyCode::Left, _) =>
+                    {
                         #[allow(clippy::collapsible_if)]
                         if let Some(ref mut d) = app.run_dialog {
-                            if d.cursor > 0 { d.cursor -= 1; }
+                            if d.cursor > 0 {
+                                d.cursor -= 1;
+                            }
                         }
                     }
-                    (KeyCode::Right, _) => {
+                    (KeyCode::Right, _) =>
+                    {
                         #[allow(clippy::collapsible_if)]
                         if let Some(ref mut d) = app.run_dialog {
-                            if d.cursor < d.input.len() { d.cursor += 1; }
+                            if d.cursor < d.input.len() {
+                                d.cursor += 1;
+                            }
                         }
                     }
                     (KeyCode::Home, _) => {
@@ -76,7 +86,8 @@ fn main() -> Result<()> {
                             d.cursor = d.input.len();
                         }
                     }
-                    (KeyCode::Backspace, _) => {
+                    (KeyCode::Backspace, _) =>
+                    {
                         #[allow(clippy::collapsible_if)]
                         if let Some(ref mut d) = app.run_dialog {
                             if d.cursor > 0 {
@@ -85,10 +96,13 @@ fn main() -> Result<()> {
                             }
                         }
                     }
-                    (KeyCode::Delete, _) => {
+                    (KeyCode::Delete, _) =>
+                    {
                         #[allow(clippy::collapsible_if)]
                         if let Some(ref mut d) = app.run_dialog {
-                            if d.cursor < d.input.len() { d.input.remove(d.cursor); }
+                            if d.cursor < d.input.len() {
+                                d.input.remove(d.cursor);
+                            }
                         }
                     }
                     (KeyCode::Char(c), KeyModifiers::NONE)
@@ -431,7 +445,7 @@ fn main() -> Result<()> {
                     (KeyCode::Char('q'), KeyModifiers::NONE) => app.quit = true,
                     _ => {}
                 }
-            } else if let Some(&action) = app.keymap.get(&(key.code, key.modifiers)) {
+            } else if let Some(action) = lookup_action(&app.keymap, key.code, key.modifiers) {
                 // ── Main keymap dispatch ──────────────────────────
                 match action {
                     Action::MoveUp => app.move_up(lh),
@@ -439,11 +453,11 @@ fn main() -> Result<()> {
                     Action::MoveLeft => app.move_left(lh),
                     Action::MoveRight => app.move_right(lh),
                     Action::FirstEntry => {
-                        app.cursor = 0;
+                        app.cursor = app.first_list_entry_index();
                         app.update_file_info();
                     }
                     Action::LastEntry => {
-                        app.cursor = app.entries.len().saturating_sub(1);
+                        app.cursor = app.last_list_entry_index();
                         app.update_file_info();
                     }
                     Action::PageUp => app.page_up(lh),

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::Local;
+use chrono::{Local, TimeZone};
 use crossterm::{
     ExecutableCommand,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -19,45 +19,15 @@ use std::{ffi::CString, os::unix::ffi::OsStrExt};
 
 /// Returns (YYYY-MM-DD, HH:MM, HH:MM:SS)
 pub fn fmt_datetime(secs: u64) -> (String, String, String) {
-    let h = (secs % 86400) / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    let mut days = (secs / 86400) as i64;
-    let mut yr = 1970i64;
-    loop {
-        let dy = if is_leap(yr) { 366 } else { 365 };
-        if days < dy {
-            break;
-        }
-        days -= dy;
-        yr += 1;
-    }
-    let md = [
-        31,
-        if is_leap(yr) { 29 } else { 28 },
-        31,
-        30,
-        31,
-        30,
-        31,
-        31,
-        30,
-        31,
-        30,
-        31,
-    ];
-    let mut mo = 1usize;
-    for (i, &d) in md.iter().enumerate() {
-        if days < d {
-            mo = i + 1;
-            break;
-        }
-        days -= d;
-    }
+    let dt = Local
+        .timestamp_opt(secs as i64, 0)
+        .single()
+        .or_else(|| Local.timestamp_opt(0, 0).single())
+        .expect("local timestamp for epoch should exist");
     (
-        format!("{:04}-{:02}-{:02}", yr, mo, days + 1),
-        format!("{:02}:{:02}", h, m),
-        format!("{:02}:{:02}:{:02}", h, m, s),
+        dt.format("%Y-%m-%d").to_string(),
+        dt.format("%H:%M").to_string(),
+        dt.format("%H:%M:%S").to_string(),
     )
 }
 
@@ -524,40 +494,43 @@ mod tests {
 
     #[test]
     fn test_fmt_datetime_epoch() {
+        let dt = Local.timestamp_opt(0, 0).single().unwrap();
         let (date, time, full) = fmt_datetime(0);
-        assert_eq!(date, "1970-01-01");
-        assert_eq!(time, "00:00");
-        assert_eq!(full, "00:00:00");
+        assert_eq!(date, dt.format("%Y-%m-%d").to_string());
+        assert_eq!(time, dt.format("%H:%M").to_string());
+        assert_eq!(full, dt.format("%H:%M:%S").to_string());
     }
 
     #[test]
     fn test_fmt_datetime_one_day() {
+        let dt = Local.timestamp_opt(86400, 0).single().unwrap();
         let (date, _, _) = fmt_datetime(86400);
-        assert_eq!(date, "1970-01-02");
+        assert_eq!(date, dt.format("%Y-%m-%d").to_string());
     }
 
     #[test]
     fn test_fmt_datetime_year_end() {
-        // 1970-12-31: day 364 (0-indexed) of 1970
+        let ts = 364 * 86400;
+        let dt = Local.timestamp_opt(ts, 0).single().unwrap();
         let (date, _, _) = fmt_datetime(364 * 86400);
-        assert_eq!(date, "1970-12-31");
+        assert_eq!(date, dt.format("%Y-%m-%d").to_string());
     }
 
     #[test]
     fn test_fmt_datetime_leap_day() {
-        // 1972 is a leap year: 1972-02-29 exists
-        // Days from epoch to 1972-02-29:
-        //   1970: 365 + 1971: 365 + Jan: 31 + Feb1-28: 28 = 365+365+31+28 = 789
-        let (date, _, _) = fmt_datetime(789 * 86400);
-        assert_eq!(date, "1972-02-29");
+        let ts = 789_u64 * 86400;
+        let dt = Local.timestamp_opt(ts as i64, 0).single().unwrap();
+        let (date, _, _) = fmt_datetime(ts);
+        assert_eq!(date, dt.format("%Y-%m-%d").to_string());
     }
 
     #[test]
     fn test_fmt_datetime_time_components() {
-        // 1970-01-01 12:34:56 = 12*3600 + 34*60 + 56 = 45296 secs
+        let ts = 45296;
+        let dt = Local.timestamp_opt(ts, 0).single().unwrap();
         let (_, time, full) = fmt_datetime(45296);
-        assert_eq!(time, "12:34");
-        assert_eq!(full, "12:34:56");
+        assert_eq!(time, dt.format("%H:%M").to_string());
+        assert_eq!(full, dt.format("%H:%M:%S").to_string());
     }
 
     #[test]

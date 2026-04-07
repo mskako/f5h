@@ -133,6 +133,17 @@ fn is_src_newer(src: &std::path::Path, dst: &std::path::Path) -> bool {
 }
 
 impl App {
+    pub fn first_list_entry_index(&self) -> usize {
+        self.entries
+            .iter()
+            .position(|e| e.name != "..")
+            .unwrap_or(0)
+    }
+
+    pub fn last_list_entry_index(&self) -> usize {
+        self.entries.len().saturating_sub(1)
+    }
+
     pub fn new(config: Config) -> Result<Self> {
         let current_dir = std::env::current_dir()?;
         let ls_src = if !config.colors.ls_colors.is_empty() {
@@ -1319,6 +1330,31 @@ mod tests {
         assert_eq!(app.current_page(lh), app.total_pages(lh) - 1);
         app.cursor = 0;
         assert_eq!(app.current_page(lh), 0);
+    }
+
+    #[test]
+    fn test_first_list_entry_index_skips_dotdot() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+
+        let app = make_test_app(dir.path().to_path_buf());
+        assert_eq!(app.first_list_entry_index(), 1);
+    }
+
+    #[test]
+    fn test_first_list_entry_index_at_root_is_zero() {
+        let app = make_test_app(PathBuf::from("/"));
+        assert_eq!(app.first_list_entry_index(), 0);
+    }
+
+    #[test]
+    fn test_last_list_entry_index_points_to_last_entry() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::write(dir.path().join("b.txt"), "").unwrap();
+
+        let app = make_test_app(dir.path().to_path_buf());
+        assert_eq!(app.last_list_entry_index(), app.entries.len() - 1);
     }
 
     // ── cols / per_page ────────────────────────────────────────────────

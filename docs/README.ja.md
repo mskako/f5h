@@ -54,6 +54,7 @@ cp target/release/f5h ~/.local/bin/
 | `J` | ディレクトリジャンプ *(未実装)* |
 
 矢印キーは常に hjkl の別名です（設定での変更不可）。上記以外のキーはすべて `~/.config/f5h/config.toml` の `[keys]` セクションで変更できます。
+`g` / `G` はそれぞれ `first_entry` / `last_entry` の既定値なので、これらも `[keys]` で変更できます。
 ディレクトリを指す symlink には `Enter` でそのまま入れます。ファイル情報欄には symlink のリンク先が表示されます。
 
 ### 複写・移動の競合ダイアログ

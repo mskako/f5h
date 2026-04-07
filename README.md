@@ -54,6 +54,7 @@ cp target/release/f5h ~/.local/bin/
 ## Key Bindings
 
 All bindings (except arrow keys) are remappable in `config.toml`.
+`g` / `G` are the defaults for `first_entry` / `last_entry`, so these can also be reassigned in `[keys]`.
 
 | Key | Action |
 |---|---|
