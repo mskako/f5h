@@ -47,6 +47,18 @@ pub struct MacroDialog {
     pub cursor: usize,    // char index
 }
 
+#[derive(Clone, Debug)]
+pub enum GitDialogState {
+    Menu,
+    CommitMsg { input: Vec<char>, cursor: usize },
+    SwitchBranch { input: Vec<char>, cursor: usize },
+}
+
+#[derive(Clone, Debug)]
+pub struct GitDialog {
+    pub state: GitDialogState,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DialogKind {
     DeleteConfirm,
@@ -121,6 +133,7 @@ pub struct App {
     pub error_msg: Option<String>,
     pub run_dialog: Option<RunDialog>,
     pub macro_dialog: Option<MacroDialog>,
+    pub git_dialog: Option<GitDialog>,
     pub file_dialog: Option<FileDialog>,
     pub show_hidden: bool,
     pub pager: String,
@@ -226,6 +239,7 @@ impl App {
             error_msg: None,
             run_dialog: None,
             macro_dialog: None,
+            git_dialog: None,
             file_dialog: None,
         };
         app.load_entries()?;
@@ -1090,6 +1104,7 @@ mod tests {
             error_msg: None,
             run_dialog: None,
             macro_dialog: None,
+            git_dialog: None,
             file_dialog: None,
             show_hidden: false,
             pager: "less".to_string(),
