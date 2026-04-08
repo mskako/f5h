@@ -11,9 +11,9 @@ use crossterm::{
 };
 use std::{io::stdout, path::PathBuf, time::Duration};
 
-use app::{App, DialogKind, FileDialog, MacroDialog, RunDialog};
+use app::{App, DialogKind, FileDialog, GitDialog, GitDialogState, MacroDialog, RunDialog};
 use config::{Action, load_config, lookup_action};
-use fs_utils::{open_in_program, run_command, shell_quote};
+use fs_utils::{git_command_silent, open_in_program, run_command, shell_quote};
 use ui::HEADER_ROWS;
 
 fn main() -> Result<()> {
@@ -111,6 +111,205 @@ fn main() -> Result<()> {
                         }
                     }
                     _ => {}
+                }
+                continue;
+            }
+            if app.git_dialog.is_some() {
+                // ── Git submenu ───────────────────────────────────
+                let state = app.git_dialog.as_ref().map(|d| d.state.clone());
+                match state {
+                    Some(GitDialogState::Menu) => {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => app.git_dialog = None,
+                            (KeyCode::Char('a'), KeyModifiers::NONE) => {
+                                // git add: tagged files or cursor file
+                                let targets: Vec<String> = {
+                                    let tagged: Vec<String> = app.entries.iter()
+                                        .zip(app.tagged.iter())
+                                        .filter(|(_, t)| **t)
+                                        .map(|(e, _)| e.name.clone())
+                                        .collect();
+                                    if !tagged.is_empty() {
+                                        tagged
+                                    } else {
+                                        app.entries.get(app.cursor)
+                                            .filter(|e| e.name != "..")
+                                            .map(|e| vec![e.name.clone()])
+                                            .unwrap_or_default()
+                                    }
+                                };
+                                app.git_dialog = None;
+                                if targets.is_empty() {
+                                    app.error_msg = Some("対象ファイルがありません".to_string());
+                                } else {
+                                    let args: Vec<&str> = std::iter::once("add")
+                                        .chain(targets.iter().map(|s| s.as_str()))
+                                        .collect();
+                                    match git_command_silent(&args, &app.current_dir) {
+                                        Ok(()) => app.reload(),
+                                        Err(e) => app.error_msg = Some(e.to_string()),
+                                    }
+                                }
+                            }
+                            (KeyCode::Char('A'), KeyModifiers::NONE)
+                            | (KeyCode::Char('A'), KeyModifiers::SHIFT) => {
+                                app.git_dialog = None;
+                                match git_command_silent(&["add", "."], &app.current_dir) {
+                                    Ok(()) => app.reload(),
+                                    Err(e) => app.error_msg = Some(e.to_string()),
+                                }
+                            }
+                            (KeyCode::Char('c'), KeyModifiers::NONE) => {
+                                app.git_dialog = Some(GitDialog {
+                                    state: GitDialogState::CommitMsg {
+                                        input: vec![],
+                                        cursor: 0,
+                                    },
+                                });
+                            }
+                            (KeyCode::Char('p'), KeyModifiers::NONE) => {
+                                app.git_dialog = None;
+                                run_command("git push", &app.current_dir)?;
+                                terminal.clear()?;
+                                app.reload();
+                            }
+                            (KeyCode::Char('P'), KeyModifiers::NONE)
+                            | (KeyCode::Char('P'), KeyModifiers::SHIFT) => {
+                                app.git_dialog = None;
+                                run_command("git pull", &app.current_dir)?;
+                                terminal.clear()?;
+                                app.reload();
+                            }
+                            (KeyCode::Char('s'), KeyModifiers::NONE) => {
+                                app.git_dialog = Some(GitDialog {
+                                    state: GitDialogState::SwitchBranch {
+                                        input: vec![],
+                                        cursor: 0,
+                                    },
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(GitDialogState::CommitMsg { .. }) => {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => {
+                                app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });
+                            }
+                            (KeyCode::Enter, KeyModifiers::NONE) => {
+                                let msg: String = app.git_dialog.as_ref()
+                                    .and_then(|d| if let GitDialogState::CommitMsg { ref input, .. } = d.state { Some(input.iter().collect()) } else { None })
+                                    .unwrap_or_default();
+                                app.git_dialog = None;
+                                if msg.trim().is_empty() {
+                                    app.error_msg = Some("コミットメッセージを入力してください".to_string());
+                                } else {
+                                    match git_command_silent(&["commit", "-m", &msg], &app.current_dir) {
+                                        Ok(()) => app.reload(),
+                                        Err(e) => app.error_msg = Some(e.to_string()),
+                                    }
+                                }
+                            }
+                            (KeyCode::Left, _) => {
+                                if let Some(GitDialog { state: GitDialogState::CommitMsg { ref mut cursor, .. } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; }
+                                }
+                            }
+                            (KeyCode::Right, _) => {
+                                if let Some(GitDialog { state: GitDialogState::CommitMsg { ref input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor < input.len() { *cursor += 1; }
+                                }
+                            }
+                            (KeyCode::Home, _) => {
+                                if let Some(GitDialog { state: GitDialogState::CommitMsg { ref mut cursor, .. } }) = app.git_dialog {
+                                    *cursor = 0;
+                                }
+                            }
+                            (KeyCode::End, _) => {
+                                if let Some(GitDialog { state: GitDialogState::CommitMsg { ref input, ref mut cursor } }) = app.git_dialog {
+                                    *cursor = input.len();
+                                }
+                            }
+                            (KeyCode::Backspace, _) => {
+                                if let Some(GitDialog { state: GitDialogState::CommitMsg { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Delete, _) => {
+                                if let Some(GitDialog { state: GitDialogState::CommitMsg { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor < input.len() { input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Char(c), KeyModifiers::NONE)
+                            | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                                if let Some(GitDialog { state: GitDialogState::CommitMsg { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    input.insert(*cursor, c);
+                                    *cursor += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(GitDialogState::SwitchBranch { .. }) => {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => {
+                                app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });
+                            }
+                            (KeyCode::Enter, KeyModifiers::NONE) => {
+                                let branch: String = app.git_dialog.as_ref()
+                                    .and_then(|d| if let GitDialogState::SwitchBranch { ref input, .. } = d.state { Some(input.iter().collect()) } else { None })
+                                    .unwrap_or_default();
+                                app.git_dialog = None;
+                                if branch.trim().is_empty() {
+                                    app.error_msg = Some("ブランチ名を入力してください".to_string());
+                                } else {
+                                    match git_command_silent(&["switch", branch.trim()], &app.current_dir) {
+                                        Ok(()) => app.reload(),
+                                        Err(e) => app.error_msg = Some(e.to_string()),
+                                    }
+                                }
+                            }
+                            (KeyCode::Left, _) => {
+                                if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref mut cursor, .. } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; }
+                                }
+                            }
+                            (KeyCode::Right, _) => {
+                                if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor < input.len() { *cursor += 1; }
+                                }
+                            }
+                            (KeyCode::Home, _) => {
+                                if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref mut cursor, .. } }) = app.git_dialog {
+                                    *cursor = 0;
+                                }
+                            }
+                            (KeyCode::End, _) => {
+                                if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref input, ref mut cursor } }) = app.git_dialog {
+                                    *cursor = input.len();
+                                }
+                            }
+                            (KeyCode::Backspace, _) => {
+                                if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Delete, _) => {
+                                if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor < input.len() { input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Char(c), KeyModifiers::NONE)
+                            | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                                if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    input.insert(*cursor, c);
+                                    *cursor += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    None => {}
                 }
                 continue;
             }
@@ -622,6 +821,9 @@ fn main() -> Result<()> {
                     }
                     Action::Macro => {
                         app.macro_dialog = Some(MacroDialog::default());
+                    }
+                    Action::Git => {
+                        app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });
                     }
                     Action::Edit => {
                         if let Some(e) = app.entries.get(app.cursor).filter(|e| !e.is_dir) {

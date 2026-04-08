@@ -1,7 +1,7 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, DialogKind, FileEntry, MacroDialog};
+use crate::app::{App, DialogKind, FileEntry, GitDialogState, MacroDialog};
 use crate::fs_utils::now_str;
 
 // ── Layout constants ───────────────────────────────────────────────────
@@ -237,6 +237,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
 
     render_run_dialog(frame, app);
     render_macro_dialog(frame, app);
+    render_git_dialog(frame, app);
     render_file_dialog(frame, app);
     render_error_msg(frame, app);
 }
@@ -744,6 +745,131 @@ fn render_macro_dialog(frame: &mut Frame, app: &App) {
     blit_ch(buf, dx, dy + 3, '╰', cyan);
     blit(buf, dx + 1, dy + 3, &"─".repeat(iw), iw, cyan);
     blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
+}
+
+// ── Git submenu dialog ─────────────────────────────────────────────────
+
+fn render_git_dialog(frame: &mut Frame, app: &App) {
+    let dlg = match app.git_dialog.as_ref() {
+        Some(d) => d,
+        None => return,
+    };
+    let area = frame.area();
+    let buf = frame.buffer_mut();
+    let cyan = app.ui_colors.border;
+    let yellow = app.ui_colors.title;
+    let dim = Style::default().fg(Color::DarkGray);
+    let white = Style::default().fg(Color::White);
+    let rev = Style::default().add_modifier(Modifier::REVERSED);
+    let green = Style::default().fg(Color::Green);
+
+    match &dlg.state {
+        GitDialogState::Menu => {
+            let dw: usize = 36;
+            let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+            let dy = area.height / 2 - 4;
+            let iw = dw - 2;
+
+            let title = if app.lang_en { " Git " } else { " Git " };
+            let rows: &[(&str, &str, &str)] = if app.lang_en {
+                &[
+                    ("a", "add", "cursor / tagged files"),
+                    ("A", "add all", "git add ."),
+                    ("c", "commit", "commit with message"),
+                    ("p", "push", "git push"),
+                    ("P", "pull", "git pull"),
+                    ("s", "switch", "switch branch"),
+                ]
+            } else {
+                &[
+                    ("a", "add", "カーソル/タグ付きファイル"),
+                    ("A", "add all", "git add ."),
+                    ("c", "commit", "メッセージ入力して commit"),
+                    ("p", "push", "git push"),
+                    ("P", "pull", "git pull"),
+                    ("s", "switch", "ブランチ切替"),
+                ]
+            };
+            let hint = if app.lang_en { "  Esc:Cancel" } else { "  Esc:キャンセル" };
+            let total_rows = rows.len() + 2; // top + rows + hint + bottom
+
+            blit_ch(buf, dx, dy, '╭', cyan);
+            blit(buf, dx + 1, dy, title, sw(title), yellow);
+            blit(buf, dx + 1 + sw(title) as u16, dy, &"─".repeat(iw.saturating_sub(sw(title))), iw.saturating_sub(sw(title)), cyan);
+            blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
+
+            for (i, (key, cmd, desc)) in rows.iter().enumerate() {
+                let y = dy + 1 + i as u16;
+                blit_ch(buf, dx, y, '│', cyan);
+                blit(buf, dx + 1, y, key, 1, green);
+                blit(buf, dx + 2, y, "  ", 2, white);
+                let cmd_w = 8;
+                blit(buf, dx + 4, y, &padr(cmd, cmd_w), cmd_w, white);
+                blit(buf, dx + 4 + cmd_w as u16, y, &trunc(desc, iw - 4 - cmd_w), iw - 4 - cmd_w, dim);
+                blit_ch(buf, dx + dw as u16 - 1, y, '│', cyan);
+            }
+
+            let hy = dy + 1 + rows.len() as u16;
+            blit_ch(buf, dx, hy, '│', cyan);
+            blit(buf, dx + 1, hy, &padr(hint, iw), iw, dim);
+            blit_ch(buf, dx + dw as u16 - 1, hy, '│', cyan);
+
+            let by = dy + total_rows as u16;
+            blit_ch(buf, dx, by, '╰', cyan);
+            blit(buf, dx + 1, by, &"─".repeat(iw), iw, cyan);
+            blit_ch(buf, dx + dw as u16 - 1, by, '╯', cyan);
+        }
+
+        GitDialogState::CommitMsg { input, cursor } | GitDialogState::SwitchBranch { input, cursor } => {
+            let is_commit = matches!(dlg.state, GitDialogState::CommitMsg { .. });
+            let dw = (area.width as usize).clamp(36, 64);
+            let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+            let dy = area.height / 2 - 2;
+            let iw = dw - 2;
+
+            let title = if is_commit {
+                if app.lang_en { " Git commit " } else { " Git commit " }
+            } else {
+                if app.lang_en { " Git switch " } else { " Git switch " }
+            };
+            let hint = if app.lang_en {
+                "  Enter:Run  Esc:Back"
+            } else {
+                "  Enter:実行  Esc:戻る"
+            };
+            let prompt = if is_commit { "msg: " } else { "branch: " };
+            let pw = sw(prompt);
+            let input_w = iw - pw;
+            let input_x = dx + 1 + pw as u16;
+
+            blit_ch(buf, dx, dy, '╭', cyan);
+            blit(buf, dx + 1, dy, title, sw(title), yellow);
+            blit(buf, dx + 1 + sw(title) as u16, dy, &"─".repeat(iw.saturating_sub(sw(title))), iw.saturating_sub(sw(title)), cyan);
+            blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
+
+            blit_ch(buf, dx, dy + 1, '│', cyan);
+            blit(buf, dx + 1, dy + 1, prompt, pw, cyan);
+            let scroll = if *cursor >= input_w { cursor + 1 - input_w } else { 0 };
+            blit(buf, input_x, dy + 1, &" ".repeat(input_w), input_w, white);
+            for (i, &ch) in input[scroll..].iter().enumerate() {
+                if i >= input_w { break; }
+                let st = if scroll + i == *cursor { rev } else { white };
+                blit_ch(buf, input_x + i as u16, dy + 1, ch, st);
+            }
+            if *cursor == input.len() && cursor - scroll < input_w {
+                blit_ch(buf, input_x + (cursor - scroll) as u16, dy + 1, ' ', rev);
+            }
+            blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
+
+            blit_ch(buf, dx, dy + 2, '│', cyan);
+            blit(buf, dx + 1, dy + 2, &padr(hint, iw), iw, dim);
+            blit_ch(buf, dx + dw as u16 - 1, dy + 2, '│', cyan);
+
+            blit_ch(buf, dx, dy + 3, '╰', cyan);
+            blit(buf, dx + 1, dy + 3, &"─".repeat(iw), iw, cyan);
+            blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
+        }
+    }
 }
 
 // ── File operation dialog ──────────────────────────────────────────────

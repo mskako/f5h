@@ -389,6 +389,20 @@ fn split_command_args(s: &str) -> Result<Vec<String>> {
     Ok(args)
 }
 
+/// git コマンドをサイレント実行し、stderr をエラーとして返す
+pub fn git_command_silent(args: &[&str], dir: &Path) -> Result<()> {
+    let out = std::process::Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(anyhow::anyhow!("{}", if msg.is_empty() { "git error".to_string() } else { msg }))
+    }
+}
+
 pub fn run_command(cmd: &str, dir: &Path) -> Result<()> {
     use crossterm::event::{self, Event};
     disable_raw_mode()?;
