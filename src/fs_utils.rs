@@ -31,9 +31,6 @@ pub fn fmt_datetime(secs: u64) -> (String, String, String) {
     )
 }
 
-pub fn is_leap(y: i64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-}
 
 pub fn now_str() -> String {
     Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
@@ -470,25 +467,6 @@ pub fn move_path(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
 mod tests {
     use super::*;
     use tempfile::tempdir;
-
-    // ── is_leap ────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_is_leap_divisible_by_400() {
-        assert!(is_leap(2000));
-    }
-    #[test]
-    fn test_is_leap_divisible_by_100_not_400() {
-        assert!(!is_leap(1900));
-    }
-    #[test]
-    fn test_is_leap_divisible_by_4_not_100() {
-        assert!(is_leap(1996));
-    }
-    #[test]
-    fn test_is_leap_not_divisible_by_4() {
-        assert!(!is_leap(1997));
-    }
 
     // ── fmt_datetime ───────────────────────────────────────────────────
 

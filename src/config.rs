@@ -208,6 +208,7 @@ pub enum Action {
     TreeToggle,
     Edit,
     Run,
+    Macro,
     Copy,
     Move,
     Delete,
@@ -240,6 +241,7 @@ pub fn action_from_str(s: &str) -> Option<Action> {
         "tree_toggle" => Some(Action::TreeToggle),
         "edit" => Some(Action::Edit),
         "run" => Some(Action::Run),
+        "macro" => Some(Action::Macro),
         "copy" => Some(Action::Copy),
         "move" => Some(Action::Move),
         "delete" => Some(Action::Delete),
@@ -300,9 +302,8 @@ pub fn lookup_action(keymap: &KeyMap, code: KeyCode, modifiers: KeyModifiers) ->
         return Some(action);
     }
 
-    if modifiers == KeyModifiers::SHIFT
-        && let KeyCode::Char(c) = code
-    {
+    if modifiers == KeyModifiers::SHIFT {
+        let KeyCode::Char(c) = code else { return None; };
         if let Some(&action) = keymap.get(&(KeyCode::Char(c), KeyModifiers::NONE)) {
             return Some(action);
         }
@@ -342,7 +343,8 @@ pub fn build_keymap(cfg_keys: &HashMap<String, String>) -> KeyMap {
         ("dir_jump", "J"),
         ("tree_toggle", "t"),
         ("edit", "e"),
-        ("run", ":"),
+        ("run", "x"),
+        ("macro", ":"),
         ("copy", "c"),
         ("move", "m"),
         ("delete", "d"),
@@ -373,7 +375,10 @@ pub fn build_keymap(cfg_keys: &HashMap<String, String>) -> KeyMap {
 pub static MENU_ACTIONS: &[(Action, &str, &str)] = &[
     (Action::Edit, "編集", "Edit"),
     (Action::Run, "実行", "Run"),
+    (Action::Macro, "マクロ", "Macro"),
     (Action::TreeToggle, "ツリー", "Tree"),
+    (Action::FirstEntry, "先頭", "First"),
+    (Action::LastEntry, "末尾", "Last"),
     (Action::Copy, "複写", "Copy"),
     (Action::Move, "移動", "Move"),
     (Action::Delete, "削除", "Del"),

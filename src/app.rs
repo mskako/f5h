@@ -41,6 +41,12 @@ pub struct RunDialog {
     pub cursor: usize,    // char index
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct MacroDialog {
+    pub input: Vec<char>, // command input (e.g. "q")
+    pub cursor: usize,    // char index
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DialogKind {
     DeleteConfirm,
@@ -114,6 +120,7 @@ pub struct App {
     pub menu_items: Vec<(String, String)>,
     pub error_msg: Option<String>,
     pub run_dialog: Option<RunDialog>,
+    pub macro_dialog: Option<MacroDialog>,
     pub file_dialog: Option<FileDialog>,
     pub show_hidden: bool,
     pub pager: String,
@@ -218,6 +225,7 @@ impl App {
             menu_items,
             error_msg: None,
             run_dialog: None,
+            macro_dialog: None,
             file_dialog: None,
         };
         app.load_entries()?;
@@ -1081,6 +1089,7 @@ mod tests {
             menu_items,
             error_msg: None,
             run_dialog: None,
+            macro_dialog: None,
             file_dialog: None,
             show_hidden: false,
             pager: "less".to_string(),

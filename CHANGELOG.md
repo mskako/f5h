@@ -6,14 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `lookup_action` key dispatch with fallback for Shift+symbol keys (e.g. `!` sent as `Shift+1` by some terminals)
+- `first_list_entry_index` / `last_list_entry_index` methods extracted for reuse and testability
+- Tests for `lookup_action` fallback behavior and list entry index helpers
+- Macro command dialog (`:`) — vi-style command input; `:q` / `:quit` quits the application
+- Menu bar now shows `g:先頭` and `G:末尾` entries for first/last navigation
+
 ### Changed
 
-- Run dialog (`:`) now shows "--- Press any key to continue ---" after command execution, accepting any key via raw mode
+- Run dialog key changed from `:` to `x`; `:` is now assigned to the macro command dialog
+- Run dialog now shows "--- Press any key to continue ---" after command execution, accepting any key via raw mode
+- `fmt_datetime` now uses `chrono::Local` for correct local-timezone date/time formatting (replaces manual UTC calculation)
+- `g` / `G` (FirstEntry / LastEntry) now skip `..` — cursor lands on the first real entry, not the parent directory link
+- Tests for `fmt_datetime` now compare against `chrono::Local` output, removing timezone-dependent hardcoded values
+- Removed unused `is_leap` helper (superseded by chrono)
 
 ### Fixed
 
 - Run dialog now uses the currently displayed directory as working directory instead of the f5h launch directory
 - Git status M/A/? marks now appear correctly on files when navigated into subdirectories
+- Replace `let_chains` with stable equivalents to support Rust 1.85/1.86 (stabilized in 1.88)
 
 ## [0.1.1] - 2026-03-21
 

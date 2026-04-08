@@ -1,7 +1,7 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, DialogKind, FileEntry};
+use crate::app::{App, DialogKind, FileEntry, MacroDialog};
 use crate::fs_utils::now_str;
 
 // ── Layout constants ───────────────────────────────────────────────────
@@ -236,6 +236,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
     blit_ch(buf, mx + mw as u16 - 1, by, '╯', cyan);
 
     render_run_dialog(frame, app);
+    render_macro_dialog(frame, app);
     render_file_dialog(frame, app);
     render_error_msg(frame, app);
 }
@@ -667,6 +668,70 @@ fn render_run_dialog(frame: &mut Frame, app: &App) {
             ' ',
             rev,
         );
+    }
+    blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
+
+    // Hint row
+    blit_ch(buf, dx, dy + 2, '│', cyan);
+    blit(buf, dx + 1, dy + 2, &padr(hint, iw), iw, dim);
+    blit_ch(buf, dx + dw as u16 - 1, dy + 2, '│', cyan);
+
+    // Bottom border
+    blit_ch(buf, dx, dy + 3, '╰', cyan);
+    blit(buf, dx + 1, dy + 3, &"─".repeat(iw), iw, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
+}
+
+// ── Macro command dialog ───────────────────────────────────────────────
+
+fn render_macro_dialog(frame: &mut Frame, app: &App) {
+    let dlg: &MacroDialog = match app.macro_dialog.as_ref() {
+        Some(d) => d,
+        None => return,
+    };
+    let area = frame.area();
+    let dw = (area.width as usize).clamp(30, 50);
+    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+    let dy = area.height / 2 - 2;
+
+    let buf = frame.buffer_mut();
+    let cyan = app.ui_colors.border;
+    let yellow = app.ui_colors.title;
+    let dim = Style::default().fg(Color::DarkGray);
+    let white = Style::default().fg(Color::White);
+    let rev = Style::default().add_modifier(Modifier::REVERSED);
+
+    let title = if app.lang_en { " Macro " } else { " マクロ " };
+    let hint = if app.lang_en {
+        "  q:Quit  Esc:Cancel"
+    } else {
+        "  q:終了  Esc:キャンセル"
+    };
+    let prompt = ":";
+    let pw = sw(prompt);
+    let iw = dw - 2;
+
+    // Top border
+    let fill_n = iw.saturating_sub(sw(title));
+    blit_ch(buf, dx, dy, '╭', cyan);
+    blit(buf, dx + 1, dy, title, sw(title), yellow);
+    blit(buf, dx + 1 + sw(title) as u16, dy, &"─".repeat(fill_n), fill_n, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
+
+    // Input row
+    let input_x = dx + 1 + pw as u16;
+    let input_w = iw - pw;
+    blit_ch(buf, dx, dy + 1, '│', cyan);
+    blit(buf, dx + 1, dy + 1, prompt, pw, cyan);
+    let scroll = if dlg.cursor >= input_w { dlg.cursor + 1 - input_w } else { 0 };
+    blit(buf, input_x, dy + 1, &" ".repeat(input_w), input_w, white);
+    for (i, &ch) in dlg.input[scroll..].iter().enumerate() {
+        if i >= input_w { break; }
+        let st = if scroll + i == dlg.cursor { rev } else { white };
+        blit_ch(buf, input_x + i as u16, dy + 1, ch, st);
+    }
+    if dlg.cursor == dlg.input.len() && dlg.cursor - scroll < input_w {
+        blit_ch(buf, input_x + (dlg.cursor - scroll) as u16, dy + 1, ' ', rev);
     }
     blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
 

@@ -11,7 +11,7 @@ use crossterm::{
 };
 use std::{io::stdout, path::PathBuf, time::Duration};
 
-use app::{App, DialogKind, FileDialog, RunDialog};
+use app::{App, DialogKind, FileDialog, MacroDialog, RunDialog};
 use config::{Action, load_config, lookup_action};
 use fs_utils::{open_in_program, run_command, shell_quote};
 use ui::HEADER_ROWS;
@@ -41,6 +41,77 @@ fn main() -> Result<()> {
             // エラーダイアログ表示中は任意のキーで閉じる
             if app.error_msg.is_some() {
                 app.error_msg = None;
+                continue;
+            }
+            if app.macro_dialog.is_some() {
+                // ── Macro command input ───────────────────────────
+                match (key.code, key.modifiers) {
+                    (KeyCode::Esc, _) => app.macro_dialog = None,
+                    (KeyCode::Enter, KeyModifiers::NONE) => {
+                        if let Some(ref dlg) = app.macro_dialog {
+                            let cmd: String = dlg.input.iter().collect();
+                            app.macro_dialog = None;
+                            match cmd.trim() {
+                                "q" | "quit" => app.quit = true,
+                                _ => {
+                                    app.error_msg =
+                                        Some(format!("不明なコマンド: {}", cmd.trim()));
+                                }
+                            }
+                        }
+                    }
+                    (KeyCode::Left, _) => {
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.macro_dialog {
+                            if d.cursor > 0 {
+                                d.cursor -= 1;
+                            }
+                        }
+                    }
+                    (KeyCode::Right, _) => {
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.macro_dialog {
+                            if d.cursor < d.input.len() {
+                                d.cursor += 1;
+                            }
+                        }
+                    }
+                    (KeyCode::Home, _) => {
+                        if let Some(ref mut d) = app.macro_dialog {
+                            d.cursor = 0;
+                        }
+                    }
+                    (KeyCode::End, _) => {
+                        if let Some(ref mut d) = app.macro_dialog {
+                            d.cursor = d.input.len();
+                        }
+                    }
+                    (KeyCode::Backspace, _) => {
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.macro_dialog {
+                            if d.cursor > 0 {
+                                d.cursor -= 1;
+                                d.input.remove(d.cursor);
+                            }
+                        }
+                    }
+                    (KeyCode::Delete, _) => {
+                        #[allow(clippy::collapsible_if)]
+                        if let Some(ref mut d) = app.macro_dialog {
+                            if d.cursor < d.input.len() {
+                                d.input.remove(d.cursor);
+                            }
+                        }
+                    }
+                    (KeyCode::Char(c), KeyModifiers::NONE)
+                    | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                        if let Some(ref mut d) = app.macro_dialog {
+                            d.input.insert(d.cursor, c);
+                            d.cursor += 1;
+                        }
+                    }
+                    _ => {}
+                }
                 continue;
             }
             if app.run_dialog.is_some() {
@@ -548,6 +619,9 @@ fn main() -> Result<()> {
                         };
                         let input: Vec<char> = args.chars().collect();
                         app.run_dialog = Some(RunDialog { input, cursor: 0 });
+                    }
+                    Action::Macro => {
+                        app.macro_dialog = Some(MacroDialog::default());
                     }
                     Action::Edit => {
                         if let Some(e) = app.entries.get(app.cursor).filter(|e| !e.is_dir) {
