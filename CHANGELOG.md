@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-08
+
 ### Added
 
 - `lookup_action` key dispatch with fallback for Shift+symbol keys (e.g. `!` sent as `Shift+1` by some terminals)
