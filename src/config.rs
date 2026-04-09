@@ -411,21 +411,16 @@ pub fn key_label(keymap: &KeyMap, action: Action) -> String {
 
 pub fn parse_ansi(codes: &str) -> Style {
     let mut style = Style::default();
+    let mut bold = false;
+    let mut fg_code: Option<u32> = None;
     for part in codes.split(';') {
         match part.trim().parse::<u32>().unwrap_or(999) {
-            0 => style = Style::default(),
-            1 => style = style.add_modifier(Modifier::BOLD),
+            0 => { style = Style::default(); bold = false; fg_code = None; }
+            1 => { style = style.add_modifier(Modifier::BOLD); bold = true; }
             2 => style = style.add_modifier(Modifier::DIM),
             4 => style = style.add_modifier(Modifier::UNDERLINED),
             7 => style = style.add_modifier(Modifier::REVERSED),
-            30 => style = style.fg(Color::Black),
-            31 => style = style.fg(Color::Red),
-            32 => style = style.fg(Color::Green),
-            33 => style = style.fg(Color::Yellow),
-            34 => style = style.fg(Color::Blue),
-            35 => style = style.fg(Color::Magenta),
-            36 => style = style.fg(Color::Cyan),
-            37 => style = style.fg(Color::White),
+            n @ 30..=37 => { style = style.fg(ansi_fg(n, false)); fg_code = Some(n); }
             90 => style = style.fg(Color::DarkGray),
             91 => style = style.fg(Color::LightRed),
             92 => style = style.fg(Color::LightGreen),
@@ -445,7 +440,36 @@ pub fn parse_ansi(codes: &str) -> Style {
             _ => {}
         }
     }
+    // Many terminals render bold + standard color (30-37) as the bright variant.
+    // Replicate that convention so colors match `ls` output.
+    if bold {
+        if let Some(n) = fg_code {
+            style = style.fg(ansi_fg(n, true));
+        }
+    }
     style
+}
+
+fn ansi_fg(code: u32, bright: bool) -> Color {
+    match (code, bright) {
+        (30, false) => Color::Black,
+        (31, false) => Color::Red,
+        (32, false) => Color::Green,
+        (33, false) => Color::Yellow,
+        (34, false) => Color::Blue,
+        (35, false) => Color::Magenta,
+        (36, false) => Color::Cyan,
+        (37, false) => Color::White,
+        (30, true) => Color::DarkGray,
+        (31, true) => Color::LightRed,
+        (32, true) => Color::LightGreen,
+        (33, true) => Color::LightYellow,
+        (34, true) => Color::LightBlue,
+        (35, true) => Color::LightMagenta,
+        (36, true) => Color::LightCyan,
+        (37, true) => Color::Gray,
+        _ => Color::Reset,
+    }
 }
 
 pub fn parse_ls_colors(s: &str) -> HashMap<String, Style> {
@@ -540,7 +564,7 @@ mod tests {
             colors.get("ext:rs").copied(),
             Some(
                 Style::default()
-                    .fg(Color::Green)
+                    .fg(Color::LightGreen)
                     .add_modifier(Modifier::BOLD)
             )
         );
@@ -548,7 +572,7 @@ mod tests {
             colors.get("di").copied(),
             Some(
                 Style::default()
-                    .fg(Color::Blue)
+                    .fg(Color::LightBlue)
                     .add_modifier(Modifier::BOLD)
             )
         );
