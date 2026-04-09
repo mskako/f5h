@@ -11,9 +11,9 @@ use crossterm::{
 };
 use std::{io::stdout, path::PathBuf, time::Duration};
 
-use app::{App, DialogKind, FileDialog, GitDialog, GitDialogState, MacroDialog, RunDialog};
+use app::{App, DialogKind, FileDialog, GitDialog, GitDialogState, MacroDialog, RemoteOp, RunDialog};
 use config::{Action, load_config, lookup_action};
-use fs_utils::{git_command_silent, open_in_program, run_command, shell_quote};
+use fs_utils::{git_command_silent, git_fetch, git_pull, git_push, open_in_program, run_command, shell_quote};
 use ui::HEADER_ROWS;
 
 fn main() -> Result<()> {
@@ -167,18 +167,33 @@ fn main() -> Result<()> {
                                     },
                                 });
                             }
+                            (KeyCode::Char('f'), KeyModifiers::NONE) => {
+                                app.git_dialog = Some(GitDialog {
+                                    state: GitDialogState::Passphrase {
+                                        op: RemoteOp::Fetch,
+                                        input: vec![],
+                                        cursor: 0,
+                                    },
+                                });
+                            }
                             (KeyCode::Char('p'), KeyModifiers::NONE) => {
-                                app.git_dialog = None;
-                                run_command("git push", &app.current_dir)?;
-                                terminal.clear()?;
-                                app.reload();
+                                app.git_dialog = Some(GitDialog {
+                                    state: GitDialogState::Passphrase {
+                                        op: RemoteOp::Push,
+                                        input: vec![],
+                                        cursor: 0,
+                                    },
+                                });
                             }
                             (KeyCode::Char('P'), KeyModifiers::NONE)
                             | (KeyCode::Char('P'), KeyModifiers::SHIFT) => {
-                                app.git_dialog = None;
-                                run_command("git pull", &app.current_dir)?;
-                                terminal.clear()?;
-                                app.reload();
+                                app.git_dialog = Some(GitDialog {
+                                    state: GitDialogState::Passphrase {
+                                        op: RemoteOp::Pull,
+                                        input: vec![],
+                                        cursor: 0,
+                                    },
+                                });
                             }
                             (KeyCode::Char('s'), KeyModifiers::NONE) => {
                                 app.git_dialog = Some(GitDialog {
@@ -302,6 +317,69 @@ fn main() -> Result<()> {
                             (KeyCode::Char(c), KeyModifiers::NONE)
                             | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
                                 if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    input.insert(*cursor, c);
+                                    *cursor += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(GitDialogState::Passphrase { .. }) => {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => {
+                                app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });
+                            }
+                            (KeyCode::Enter, KeyModifiers::NONE) => {
+                                let (op, passphrase): (RemoteOp, String) = match app.git_dialog.as_ref() {
+                                    Some(GitDialog { state: GitDialogState::Passphrase { op, input, .. } }) => {
+                                        (*op, input.iter().collect())
+                                    }
+                                    _ => unreachable!(),
+                                };
+                                app.git_dialog = None;
+                                let result = match op {
+                                    RemoteOp::Fetch => git_fetch(&app.current_dir, &passphrase),
+                                    RemoteOp::Push  => git_push(&app.current_dir, &passphrase),
+                                    RemoteOp::Pull  => git_pull(&app.current_dir, &passphrase),
+                                };
+                                match result {
+                                    Ok(()) => app.reload(),
+                                    Err(e) => app.error_msg = Some(e.to_string()),
+                                }
+                            }
+                            (KeyCode::Left, _) => {
+                                if let Some(GitDialog { state: GitDialogState::Passphrase { ref mut cursor, .. } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; }
+                                }
+                            }
+                            (KeyCode::Right, _) => {
+                                if let Some(GitDialog { state: GitDialogState::Passphrase { ref input, ref mut cursor, .. } }) = app.git_dialog {
+                                    if *cursor < input.len() { *cursor += 1; }
+                                }
+                            }
+                            (KeyCode::Home, _) => {
+                                if let Some(GitDialog { state: GitDialogState::Passphrase { ref mut cursor, .. } }) = app.git_dialog {
+                                    *cursor = 0;
+                                }
+                            }
+                            (KeyCode::End, _) => {
+                                if let Some(GitDialog { state: GitDialogState::Passphrase { ref input, ref mut cursor, .. } }) = app.git_dialog {
+                                    *cursor = input.len();
+                                }
+                            }
+                            (KeyCode::Backspace, _) => {
+                                if let Some(GitDialog { state: GitDialogState::Passphrase { ref mut input, ref mut cursor, .. } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Delete, _) => {
+                                if let Some(GitDialog { state: GitDialogState::Passphrase { ref mut input, ref mut cursor, .. } }) = app.git_dialog {
+                                    if *cursor < input.len() { input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Char(c), KeyModifiers::NONE)
+                            | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                                if let Some(GitDialog { state: GitDialogState::Passphrase { ref mut input, ref mut cursor, .. } }) = app.git_dialog {
                                     input.insert(*cursor, c);
                                     *cursor += 1;
                                 }

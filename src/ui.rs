@@ -1,7 +1,7 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, DialogKind, FileEntry, GitDialogState, MacroDialog};
+use crate::app::{App, DialogKind, FileEntry, GitDialogState, MacroDialog, RemoteOp};
 use crate::fs_utils::now_str;
 
 // ── Layout constants ───────────────────────────────────────────────────
@@ -776,8 +776,9 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
                     ("a", "add", "cursor / tagged files"),
                     ("A", "add all", "git add ."),
                     ("c", "commit", "commit with message"),
+                    ("f", "fetch", "git fetch origin"),
                     ("p", "push", "git push"),
-                    ("P", "pull", "git pull"),
+                    ("P", "pull", "fetch + fast-forward"),
                     ("s", "switch", "switch branch"),
                 ]
             } else {
@@ -785,8 +786,9 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
                     ("a", "add", "カーソル/タグ付きファイル"),
                     ("A", "add all", "git add ."),
                     ("c", "commit", "メッセージ入力して commit"),
+                    ("f", "fetch", "git fetch origin"),
                     ("p", "push", "git push"),
-                    ("P", "pull", "git pull"),
+                    ("P", "pull", "fetch + fast-forward"),
                     ("s", "switch", "ブランチ切替"),
                 ]
             };
@@ -868,6 +870,66 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
             blit_ch(buf, dx, dy + 3, '╰', cyan);
             blit(buf, dx + 1, dy + 3, &"─".repeat(iw), iw, cyan);
             blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
+        }
+
+        GitDialogState::Passphrase { op, input, cursor } => {
+            let dw = (area.width as usize).clamp(36, 56);
+            let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+            let dy = area.height / 2 - 2;
+            let iw = dw - 2;
+
+            let op_label = match op {
+                RemoteOp::Fetch => "fetch",
+                RemoteOp::Push => "push",
+                RemoteOp::Pull => "pull",
+            };
+            let title = format!(" Git {} ", op_label);
+            let hint = if app.lang_en {
+                "  Enter:Run  Esc:Cancel"
+            } else {
+                "  Enter:実行  Esc:キャンセル"
+            };
+            let prompt = "passphrase: ";
+            let pw = sw(prompt);
+            let input_w = iw.saturating_sub(pw);
+            let input_x = dx + 1 + pw as u16;
+
+            blit_ch(buf, dx, dy, '╭', cyan);
+            blit(buf, dx + 1, dy, &title, sw(&title), yellow);
+            blit(buf, dx + 1 + sw(&title) as u16, dy, &"─".repeat(iw.saturating_sub(sw(&title))), iw.saturating_sub(sw(&title)), cyan);
+            blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
+
+            // サブタイトル
+            let sub = if app.lang_en {
+                "  (empty = try SSH agent)"
+            } else {
+                "  空=SSHエージェント試行"
+            };
+            blit_ch(buf, dx, dy + 1, '│', cyan);
+            blit(buf, dx + 1, dy + 1, &padr(sub, iw), iw, dim);
+            blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
+
+            // パスフレーズ入力行（* でマスク）
+            blit_ch(buf, dx, dy + 2, '│', cyan);
+            blit(buf, dx + 1, dy + 2, prompt, pw, cyan);
+            let scroll = if *cursor >= input_w { cursor + 1 - input_w } else { 0 };
+            blit(buf, input_x, dy + 2, &" ".repeat(input_w), input_w, white);
+            for i in 0..input.len().saturating_sub(scroll).min(input_w) {
+                let st = if scroll + i == *cursor { rev } else { white };
+                blit_ch(buf, input_x + i as u16, dy + 2, '*', st);
+            }
+            if *cursor == input.len() && cursor - scroll < input_w {
+                blit_ch(buf, input_x + (cursor - scroll) as u16, dy + 2, ' ', rev);
+            }
+            blit_ch(buf, dx + dw as u16 - 1, dy + 2, '│', cyan);
+
+            blit_ch(buf, dx, dy + 3, '│', cyan);
+            blit(buf, dx + 1, dy + 3, &padr(hint, iw), iw, dim);
+            blit_ch(buf, dx + dw as u16 - 1, dy + 3, '│', cyan);
+
+            blit_ch(buf, dx, dy + 4, '╰', cyan);
+            blit(buf, dx + 1, dy + 4, &"─".repeat(iw), iw, cyan);
+            blit_ch(buf, dx + dw as u16 - 1, dy + 4, '╯', cyan);
         }
     }
 }

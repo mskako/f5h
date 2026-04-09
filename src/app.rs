@@ -47,11 +47,21 @@ pub struct MacroDialog {
     pub cursor: usize,    // char index
 }
 
+/// push / pull / fetch のどれを実行するか
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RemoteOp {
+    Fetch,
+    Push,
+    Pull,
+}
+
 #[derive(Clone, Debug)]
 pub enum GitDialogState {
     Menu,
     CommitMsg { input: Vec<char>, cursor: usize },
     SwitchBranch { input: Vec<char>, cursor: usize },
+    /// SSH パスフレーズ入力（空 = SSHエージェント試行）
+    Passphrase { op: RemoteOp, input: Vec<char>, cursor: usize },
 }
 
 #[derive(Clone, Debug)]
