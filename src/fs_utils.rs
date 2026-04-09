@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::{Local, TimeZone};
+use git2::{CredentialType, FetchOptions, PushOptions, RemoteCallbacks, Repository};
 use crossterm::{
     ExecutableCommand,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -403,6 +404,103 @@ pub fn git_command_silent(args: &[&str], dir: &Path) -> Result<()> {
     }
 }
 
+// ── git2 remote operations ─────────────────────────────────────────────
+
+/// SSH 認証コールバックを生成する。
+/// passphrase が空なら SSH エージェントを試み、失敗した場合は ~/.ssh/ の秘密鍵ファイルを
+/// パスフレーズなしで試みる。非空なら鍵ファイル + パスフレーズを使う。
+fn make_git_callbacks<'a>(passphrase: String) -> RemoteCallbacks<'a> {
+    let mut cb = RemoteCallbacks::new();
+    cb.credentials(move |_url, username, allowed| {
+        let user = username.unwrap_or("git");
+        if allowed.contains(CredentialType::SSH_KEY) {
+            // パスフレーズ未入力の場合はまず SSH エージェントを試みる
+            if passphrase.is_empty() {
+                if let Ok(cred) = git2::Cred::ssh_key_from_agent(user) {
+                    return Ok(cred);
+                }
+            }
+            // ~/.ssh/ の既定の鍵ファイルを探してパスフレーズで認証する
+            let home = std::env::var("HOME").unwrap_or_default();
+            for name in &["id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"] {
+                let priv_key = PathBuf::from(&home).join(".ssh").join(name);
+                if !priv_key.exists() {
+                    continue;
+                }
+                let phrase = if passphrase.is_empty() { None } else { Some(passphrase.as_str()) };
+                return git2::Cred::ssh_key(user, None, &priv_key, phrase);
+            }
+            return Err(git2::Error::from_str("SSH 秘密鍵が見つかりません (~/.ssh/)"));
+        }
+        if allowed.contains(CredentialType::DEFAULT) {
+            return git2::Cred::default();
+        }
+        Err(git2::Error::from_str("no suitable credentials"))
+    });
+    cb
+}
+
+/// origin から fetch する
+pub fn git_fetch(dir: &Path, passphrase: &str) -> Result<()> {
+    let repo = Repository::discover(dir)?;
+    let mut remote = repo.find_remote("origin")?;
+    let mut opts = FetchOptions::new();
+    opts.remote_callbacks(make_git_callbacks(passphrase.to_string()));
+    remote.fetch(&[] as &[&str], Some(&mut opts), None)?;
+    Ok(())
+}
+
+/// 現在のブランチを origin へ push する
+pub fn git_push(dir: &Path, passphrase: &str) -> Result<()> {
+    let repo = Repository::discover(dir)?;
+    let head = repo.head()?;
+    let branch = head
+        .shorthand()
+        .ok_or_else(|| anyhow::anyhow!("HEAD がブランチを指していません"))?
+        .to_string();
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    let mut remote = repo.find_remote("origin")?;
+    let mut cb = make_git_callbacks(passphrase.to_string());
+    cb.push_update_reference(|refname, status| {
+        if let Some(msg) = status {
+            return Err(git2::Error::from_str(&format!("{refname}: {msg}")));
+        }
+        Ok(())
+    });
+    let mut opts = PushOptions::new();
+    opts.remote_callbacks(cb);
+    remote.push(&[&refspec], Some(&mut opts))?;
+    Ok(())
+}
+
+/// fetch してから fast-forward マージを試みる（non-ff の場合はエラー）
+pub fn git_pull(dir: &Path, passphrase: &str) -> Result<()> {
+    git_fetch(dir, passphrase)?;
+    let repo = Repository::discover(dir)?;
+    let fetch_head = repo.find_reference("FETCH_HEAD")?;
+    let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
+    let (analysis, _) = repo.merge_analysis(&[&fetch_commit])?;
+    if analysis.is_up_to_date() {
+        return Ok(());
+    }
+    if !analysis.is_fast_forward() {
+        return Err(anyhow::anyhow!(
+            "fast-forward できません。ターミナルで git pull を実行してください"
+        ));
+    }
+    let head = repo.head()?;
+    let branch = head
+        .shorthand()
+        .ok_or_else(|| anyhow::anyhow!("HEAD がブランチを指していません"))?
+        .to_string();
+    let refname = format!("refs/heads/{branch}");
+    let mut reference = repo.find_reference(&refname)?;
+    reference.set_target(fetch_commit.id(), "pull: fast-forward")?;
+    repo.set_head(&refname)?;
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
+    Ok(())
+}
+
 pub fn run_command(cmd: &str, dir: &Path) -> Result<()> {
     use crossterm::event::{self, Event};
     disable_raw_mode()?;
@@ -772,5 +870,78 @@ mod tests {
 
         let with_hidden = tree_list_subdirs(&dir.path().to_path_buf(), true);
         assert_eq!(with_hidden.len(), 2);
+    }
+
+    // ── git remote operations ──────────────────────────────────────────
+
+    fn init_repo_with_commit(dir: &std::path::Path) -> git2::Repository {
+        let repo = git2::Repository::init(dir).unwrap();
+        let sig = git2::Signature::now("test", "test@example.com").unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        {
+            let tree = repo.find_tree(tree_id).unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+        }
+        repo
+    }
+
+    #[test]
+    fn test_git_fetch_errors_on_non_repo() {
+        let dir = tempdir().unwrap();
+        let err = git_fetch(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn test_git_push_errors_on_non_repo() {
+        let dir = tempdir().unwrap();
+        let err = git_push(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn test_git_pull_errors_on_non_repo() {
+        let dir = tempdir().unwrap();
+        let err = git_pull(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn test_git_fetch_errors_without_origin() {
+        let dir = tempdir().unwrap();
+        init_repo_with_commit(dir.path());
+        // リモートが存在しないので "origin" not found エラー
+        let err = git_fetch(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn test_git_push_errors_without_origin() {
+        let dir = tempdir().unwrap();
+        init_repo_with_commit(dir.path());
+        // origin がないので push は失敗する
+        let err = git_push(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn test_git_pull_errors_without_origin() {
+        let dir = tempdir().unwrap();
+        init_repo_with_commit(dir.path());
+        // fetch が origin なしで失敗するため pull も失敗する
+        let err = git_pull(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn test_git_push_errors_on_detached_head() {
+        let dir = tempdir().unwrap();
+        let repo = init_repo_with_commit(dir.path());
+        // HEAD をデタッチする
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.set_head_detached(head_commit.id()).unwrap();
+        // ブランチ名が取れないので push は "HEAD がブランチを指していません" エラー
+        let err = git_push(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
     }
 }
