@@ -238,6 +238,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
     render_run_dialog(frame, app);
     render_macro_dialog(frame, app);
     render_git_dialog(frame, app);
+    render_git_running(frame, app);
     render_file_dialog(frame, app);
     render_error_msg(frame, app);
 }
@@ -932,6 +933,38 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
             blit_ch(buf, dx + dw as u16 - 1, dy + 4, '╯', cyan);
         }
     }
+}
+
+// ── Git running overlay ────────────────────────────────────────────────
+
+fn render_git_running(frame: &mut Frame, app: &App) {
+    if !app.git_running {
+        return;
+    }
+    let area = frame.area();
+    let buf = frame.buffer_mut();
+    let cyan = app.ui_colors.border;
+    let yellow = app.ui_colors.title;
+    let dim = Style::default().fg(Color::DarkGray);
+
+    let msg = if app.lang_en { " Git: running... " } else { " Git: 実行中... " };
+    let dw = sw(msg) + 2;
+    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+    let dy = area.height / 2;
+
+    blit_ch(buf, dx, dy, '╭', cyan);
+    blit(buf, dx + 1, dy, msg, sw(msg), yellow);
+    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
+
+    let hint = if app.lang_en { "  please wait..." } else { "  しばらくお待ちください..." };
+    let iw = dw - 2;
+    blit_ch(buf, dx, dy + 1, '│', cyan);
+    blit(buf, dx + 1, dy + 1, &padr(hint, iw), iw, dim);
+    blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
+
+    blit_ch(buf, dx, dy + 2, '╰', cyan);
+    blit(buf, dx + 1, dy + 2, &"─".repeat(iw), iw, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, dy + 2, '╯', cyan);
 }
 
 // ── File operation dialog ──────────────────────────────────────────────
