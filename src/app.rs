@@ -144,6 +144,7 @@ pub struct App {
     pub run_dialog: Option<RunDialog>,
     pub macro_dialog: Option<MacroDialog>,
     pub git_dialog: Option<GitDialog>,
+    pub git_running: bool,
     pub file_dialog: Option<FileDialog>,
     pub show_hidden: bool,
     pub pager: String,
@@ -250,6 +251,7 @@ impl App {
             run_dialog: None,
             macro_dialog: None,
             git_dialog: None,
+            git_running: false,
             file_dialog: None,
         };
         app.load_entries()?;
@@ -1115,6 +1117,7 @@ mod tests {
             run_dialog: None,
             macro_dialog: None,
             git_dialog: None,
+            git_running: false,
             file_dialog: None,
             show_hidden: false,
             pager: "less".to_string(),

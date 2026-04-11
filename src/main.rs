@@ -14,6 +14,7 @@ use std::{io::stdout, path::PathBuf, time::Duration};
 use app::{App, DialogKind, FileDialog, GitDialog, GitDialogState, MacroDialog, RemoteOp, RunDialog};
 use config::{Action, load_config, lookup_action};
 use fs_utils::{git_command_silent, git_fetch, git_pull, git_push, open_in_program, run_command, shell_quote};
+use std::sync::mpsc;
 use ui::HEADER_ROWS;
 
 fn main() -> Result<()> {
@@ -24,8 +25,29 @@ fn main() -> Result<()> {
     let mut terminal = ratatui::Terminal::new(ratatui::backend::CrosstermBackend::new(stdout()))?;
 
     let mut app = App::new(config)?;
+    let mut git_task: Option<mpsc::Receiver<anyhow::Result<()>>> = None;
 
     while !app.quit {
+        // バックグラウンド git タスクの完了チェック
+        if let Some(ref rx) = git_task {
+            match rx.try_recv() {
+                Ok(Ok(())) => {
+                    app.git_running = false;
+                    git_task = None;
+                    app.reload();
+                }
+                Ok(Err(e)) => {
+                    app.git_running = false;
+                    git_task = None;
+                    app.error_msg = Some(e.to_string());
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    app.git_running = false;
+                    git_task = None;
+                }
+            }
+        }
         let term_h = terminal.size()?.height as usize;
         let lh = term_h.saturating_sub(1 + 2 + HEADER_ROWS as usize).max(1);
 
@@ -337,15 +359,18 @@ fn main() -> Result<()> {
                                     _ => unreachable!(),
                                 };
                                 app.git_dialog = None;
-                                let result = match op {
-                                    RemoteOp::Fetch => git_fetch(&app.current_dir, &passphrase),
-                                    RemoteOp::Push  => git_push(&app.current_dir, &passphrase),
-                                    RemoteOp::Pull  => git_pull(&app.current_dir, &passphrase),
-                                };
-                                match result {
-                                    Ok(()) => app.reload(),
-                                    Err(e) => app.error_msg = Some(e.to_string()),
-                                }
+                                app.git_running = true;
+                                let dir = app.current_dir.clone();
+                                let (tx, rx) = mpsc::channel();
+                                std::thread::spawn(move || {
+                                    let result = match op {
+                                        RemoteOp::Fetch => git_fetch(&dir, &passphrase),
+                                        RemoteOp::Push  => git_push(&dir, &passphrase),
+                                        RemoteOp::Pull  => git_pull(&dir, &passphrase),
+                                    };
+                                    let _ = tx.send(result);
+                                });
+                                git_task = Some(rx);
                             }
                             (KeyCode::Left, _) => {
                                 if let Some(GitDialog { state: GitDialogState::Passphrase { ref mut cursor, .. } }) = app.git_dialog {

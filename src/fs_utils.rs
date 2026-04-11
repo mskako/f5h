@@ -1,6 +1,5 @@
 use anyhow::Result;
 use chrono::{Local, TimeZone};
-use git2::{CredentialType, FetchOptions, PushOptions, RemoteCallbacks, Repository};
 use crossterm::{
     ExecutableCommand,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
@@ -404,101 +403,79 @@ pub fn git_command_silent(args: &[&str], dir: &Path) -> Result<()> {
     }
 }
 
-// ── git2 remote operations ─────────────────────────────────────────────
+// ── git remote operations (subprocess) ────────────────────────────────
 
-/// SSH 認証コールバックを生成する。
-/// passphrase が空なら SSH エージェントを試み、失敗した場合は ~/.ssh/ の秘密鍵ファイルを
-/// パスフレーズなしで試みる。非空なら鍵ファイル + パスフレーズを使う。
-fn make_git_callbacks<'a>(passphrase: String) -> RemoteCallbacks<'a> {
-    let mut cb = RemoteCallbacks::new();
-    cb.credentials(move |_url, username, allowed| {
-        let user = username.unwrap_or("git");
-        if allowed.contains(CredentialType::SSH_KEY) {
-            // パスフレーズ未入力の場合はまず SSH エージェントを試みる
-            if passphrase.is_empty() {
-                if let Ok(cred) = git2::Cred::ssh_key_from_agent(user) {
-                    return Ok(cred);
-                }
-            }
-            // ~/.ssh/ の既定の鍵ファイルを探してパスフレーズで認証する
-            let home = std::env::var("HOME").unwrap_or_default();
-            for name in &["id_ed25519", "id_ecdsa", "id_rsa", "id_dsa"] {
-                let priv_key = PathBuf::from(&home).join(".ssh").join(name);
-                if !priv_key.exists() {
-                    continue;
-                }
-                let phrase = if passphrase.is_empty() { None } else { Some(passphrase.as_str()) };
-                return git2::Cred::ssh_key(user, None, &priv_key, phrase);
-            }
-            return Err(git2::Error::from_str("SSH 秘密鍵が見つかりません (~/.ssh/)"));
-        }
-        if allowed.contains(CredentialType::DEFAULT) {
-            return git2::Cred::default();
-        }
-        Err(git2::Error::from_str("no suitable credentials"))
-    });
-    cb
+/// SSH パスフレーズを返す一時 askpass スクリプトを作成する。
+/// 呼び出し元は使用後に削除する責任を持つ。
+#[cfg(unix)]
+fn create_askpass_script(passphrase: &str) -> Result<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::env::temp_dir().join(format!(".f5h_ap_{}.sh", std::process::id()));
+    let content = format!("#!/bin/sh\nprintf '%s\\n' {}\n", shell_quote(passphrase));
+    fs::write(&path, &content)?;
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+    Ok(path)
+}
+
+/// git リモートコマンドをサイレント実行する。
+/// passphrase が非空なら SSH_ASKPASS 経由でパスフレーズを渡す。
+/// 空なら SSH エージェントを使い、エージェントがない場合は即エラー返却する。
+fn git_remote_cmd(args: &[&str], dir: &Path, passphrase: &str) -> Result<()> {
+    let mut cmd = std::process::Command::new("git");
+    cmd.args(args).current_dir(dir).env("GIT_TERMINAL_PROMPT", "0");
+
+    #[cfg(unix)]
+    let askpass_path: Option<PathBuf> = if !passphrase.is_empty() {
+        let p = create_askpass_script(passphrase)?;
+        cmd.env("SSH_ASKPASS", &p).env("SSH_ASKPASS_REQUIRE", "force");
+        Some(p)
+    } else {
+        // SSH エージェントを使う。エージェントがなければ即失敗させる
+        cmd.env("GIT_SSH_COMMAND", "ssh -oBatchMode=yes");
+        None
+    };
+
+    let out = cmd.output();
+
+    #[cfg(unix)]
+    if let Some(p) = askpass_path {
+        let _ = fs::remove_file(&p);
+    }
+
+    let out = out?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(anyhow::anyhow!("{}", if msg.is_empty() { "git error".to_string() } else { msg }))
+    }
 }
 
 /// origin から fetch する
 pub fn git_fetch(dir: &Path, passphrase: &str) -> Result<()> {
-    let repo = Repository::discover(dir)?;
-    let mut remote = repo.find_remote("origin")?;
-    let mut opts = FetchOptions::new();
-    opts.remote_callbacks(make_git_callbacks(passphrase.to_string()));
-    remote.fetch(&[] as &[&str], Some(&mut opts), None)?;
-    Ok(())
+    git_remote_cmd(&["fetch", "origin"], dir, passphrase)
 }
 
 /// 現在のブランチを origin へ push する
 pub fn git_push(dir: &Path, passphrase: &str) -> Result<()> {
-    let repo = Repository::discover(dir)?;
-    let head = repo.head()?;
-    let branch = head
-        .shorthand()
-        .ok_or_else(|| anyhow::anyhow!("HEAD がブランチを指していません"))?
-        .to_string();
-    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-    let mut remote = repo.find_remote("origin")?;
-    let mut cb = make_git_callbacks(passphrase.to_string());
-    cb.push_update_reference(|refname, status| {
-        if let Some(msg) = status {
-            return Err(git2::Error::from_str(&format!("{refname}: {msg}")));
-        }
-        Ok(())
-    });
-    let mut opts = PushOptions::new();
-    opts.remote_callbacks(cb);
-    remote.push(&[&refspec], Some(&mut opts))?;
-    Ok(())
+    let out = std::process::Command::new("git")
+        .args(["branch", "--show-current"])
+        .current_dir(dir)
+        .output()?;
+    if !out.status.success() {
+        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(anyhow::anyhow!("{}", if msg.is_empty() { "git error".to_string() } else { msg }));
+    }
+    let branch = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if branch.is_empty() {
+        return Err(anyhow::anyhow!("HEAD がブランチを指していません (detached HEAD)"));
+    }
+    git_remote_cmd(&["push", "origin", &branch], dir, passphrase)
 }
 
 /// fetch してから fast-forward マージを試みる（non-ff の場合はエラー）
 pub fn git_pull(dir: &Path, passphrase: &str) -> Result<()> {
-    git_fetch(dir, passphrase)?;
-    let repo = Repository::discover(dir)?;
-    let fetch_head = repo.find_reference("FETCH_HEAD")?;
-    let fetch_commit = repo.reference_to_annotated_commit(&fetch_head)?;
-    let (analysis, _) = repo.merge_analysis(&[&fetch_commit])?;
-    if analysis.is_up_to_date() {
-        return Ok(());
-    }
-    if !analysis.is_fast_forward() {
-        return Err(anyhow::anyhow!(
-            "fast-forward できません。ターミナルで git pull を実行してください"
-        ));
-    }
-    let head = repo.head()?;
-    let branch = head
-        .shorthand()
-        .ok_or_else(|| anyhow::anyhow!("HEAD がブランチを指していません"))?
-        .to_string();
-    let refname = format!("refs/heads/{branch}");
-    let mut reference = repo.find_reference(&refname)?;
-    reference.set_target(fetch_commit.id(), "pull: fast-forward")?;
-    repo.set_head(&refname)?;
-    repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))?;
-    Ok(())
+    git_remote_cmd(&["pull", "--ff-only"], dir, passphrase)
 }
 
 pub fn run_command(cmd: &str, dir: &Path) -> Result<()> {
@@ -874,15 +851,21 @@ mod tests {
 
     // ── git remote operations ──────────────────────────────────────────
 
-    fn init_repo_with_commit(dir: &std::path::Path) -> git2::Repository {
-        let repo = git2::Repository::init(dir).unwrap();
-        let sig = git2::Signature::now("test", "test@example.com").unwrap();
-        let tree_id = repo.index().unwrap().write_tree().unwrap();
-        {
-            let tree = repo.find_tree(tree_id).unwrap();
-            repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
-        }
-        repo
+    /// テスト用に git リポジトリを初期化してコミットを作成する
+    fn init_git_repo_for_test(dir: &std::path::Path) {
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
+                .output()
+                .unwrap()
+        };
+        git(&["init"]);
+        git(&["commit", "--allow-empty", "-m", "init"]);
     }
 
     #[test]
@@ -909,8 +892,7 @@ mod tests {
     #[test]
     fn test_git_fetch_errors_without_origin() {
         let dir = tempdir().unwrap();
-        init_repo_with_commit(dir.path());
-        // リモートが存在しないので "origin" not found エラー
+        init_git_repo_for_test(dir.path());
         let err = git_fetch(dir.path(), "").unwrap_err().to_string();
         assert!(!err.is_empty());
     }
@@ -918,8 +900,7 @@ mod tests {
     #[test]
     fn test_git_push_errors_without_origin() {
         let dir = tempdir().unwrap();
-        init_repo_with_commit(dir.path());
-        // origin がないので push は失敗する
+        init_git_repo_for_test(dir.path());
         let err = git_push(dir.path(), "").unwrap_err().to_string();
         assert!(!err.is_empty());
     }
@@ -927,8 +908,7 @@ mod tests {
     #[test]
     fn test_git_pull_errors_without_origin() {
         let dir = tempdir().unwrap();
-        init_repo_with_commit(dir.path());
-        // fetch が origin なしで失敗するため pull も失敗する
+        init_git_repo_for_test(dir.path());
         let err = git_pull(dir.path(), "").unwrap_err().to_string();
         assert!(!err.is_empty());
     }
@@ -936,11 +916,13 @@ mod tests {
     #[test]
     fn test_git_push_errors_on_detached_head() {
         let dir = tempdir().unwrap();
-        let repo = init_repo_with_commit(dir.path());
+        init_git_repo_for_test(dir.path());
         // HEAD をデタッチする
-        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
-        repo.set_head_detached(head_commit.id()).unwrap();
-        // ブランチ名が取れないので push は "HEAD がブランチを指していません" エラー
+        std::process::Command::new("git")
+            .args(["checkout", "--detach", "HEAD"])
+            .current_dir(dir.path())
+            .output()
+            .unwrap();
         let err = git_push(dir.path(), "").unwrap_err().to_string();
         assert!(!err.is_empty());
     }
