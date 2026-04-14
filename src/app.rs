@@ -41,10 +41,36 @@ pub struct RunDialog {
     pub cursor: usize,    // char index
 }
 
+/// 機能ダイアログの 1 コマンド定義
+pub struct FuncCmd {
+    pub name: &'static str,    // コマンド名 e.g. "mv"
+    pub args: &'static str,    // 引数表示 e.g. "<name>"
+    pub desc_ja: &'static str,
+    pub desc_en: &'static str,
+}
+
+/// 利用可能なコマンド一覧
+pub static FUNC_CMDS: &[FuncCmd] = &[
+    FuncCmd { name: "mv",   args: "<name>", desc_ja: "カーソルファイルをリネーム", desc_en: "rename cursor file" },
+    FuncCmd { name: "q",    args: "",       desc_ja: "終了 (quit)",               desc_en: "quit" },
+    FuncCmd { name: "help", args: "",       desc_ja: "コマンド一覧",               desc_en: "list commands" },
+];
+
 #[derive(Clone, Debug, Default)]
-pub struct MacroDialog {
-    pub input: Vec<char>, // command input (e.g. "q")
-    pub cursor: usize,    // char index
+pub struct FuncDialog {
+    pub input: Vec<char>, // コマンドライン全体 e.g. ['m','v',' ','f','o','o']
+    pub cursor: usize,
+    pub selected: usize,  // フィルタリスト内の選択位置
+}
+
+/// ファイル名検索の状態
+#[derive(Clone, Debug)]
+pub struct SearchState {
+    pub input: Vec<char>,
+    pub cursor: usize,
+    pub origin: usize,      // 検索開始前のカーソル位置
+    pub matches: Vec<usize>, // マッチしたエントリのインデックス
+    pub match_idx: usize,    // matches の中の現在位置
 }
 
 /// push / pull / fetch のどれを実行するか
@@ -146,7 +172,9 @@ pub struct App {
     pub menu_items: Vec<(String, String)>,
     pub error_msg: Option<String>,
     pub run_dialog: Option<RunDialog>,
-    pub macro_dialog: Option<MacroDialog>,
+    pub func_dialog: Option<FuncDialog>,
+    pub search: Option<SearchState>,
+    pub last_search: String,
     pub git_dialog: Option<GitDialog>,
     pub git_running: bool,
     pub file_dialog: Option<FileDialog>,
@@ -255,7 +283,9 @@ impl App {
             menu_items,
             error_msg: None,
             run_dialog: None,
-            macro_dialog: None,
+            func_dialog: None,
+            search: None,
+            last_search: String::new(),
             git_dialog: None,
             git_running: false,
             file_dialog: None,
@@ -448,6 +478,28 @@ impl App {
         }
         self.update_file_info();
         Ok(())
+    }
+
+    /// パターン文字列でエントリ名を検索し、マッチしたインデックスのリストを返す。
+    /// 正規表現として解釈を試み、失敗した場合は部分文字列一致にフォールバック。
+    pub fn compute_search_matches(&self, pattern: &str) -> Vec<usize> {
+        if pattern.is_empty() {
+            return vec![];
+        }
+        use regex::RegexBuilder;
+        let re = RegexBuilder::new(pattern).case_insensitive(true).build();
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| {
+                if e.name == ".." { return false; }
+                match &re {
+                    Ok(r) => r.is_match(&e.name),
+                    Err(_) => e.name.to_lowercase().contains(&pattern.to_lowercase()),
+                }
+            })
+            .map(|(i, _)| i)
+            .collect()
     }
 
     /// load_entries + update_file_info をまとめて実行し、失敗時はエラーメッセージをセット
@@ -1126,7 +1178,9 @@ mod tests {
             menu_items,
             error_msg: None,
             run_dialog: None,
-            macro_dialog: None,
+            func_dialog: None,
+            search: None,
+            last_search: String::new(),
             git_dialog: None,
             git_running: false,
             file_dialog: None,

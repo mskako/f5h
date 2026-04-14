@@ -1,7 +1,7 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, DialogKind, FileEntry, GitDialogState, MacroDialog, RemoteOp};
+use crate::app::{App, DialogKind, FileEntry, FuncDialog, GitDialogState, RemoteOp, FUNC_CMDS};
 use crate::fs_utils::now_str;
 
 // ── Layout constants ───────────────────────────────────────────────────
@@ -228,7 +228,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
         }
     }
 
-    // Bottom border with embedded reversed status text (original FILMTN style)
+    // Bottom border: 検索バーが active なら左側に表示、右端にページ情報
     let by = my + mh - 1;
     let page = app.current_page(lh) + 1;
     let total = app.total_pages(lh);
@@ -237,15 +237,40 @@ pub fn ui(frame: &mut Frame, app: &App) {
         app.labels.f1_help, page, total, app.labels.page_unit
     );
     let st_w = sw(&status_text);
-    let fill_n = (mw - 2).saturating_sub(st_w);
     let rev = Style::default().add_modifier(Modifier::REVERSED);
     blit_ch(buf, mx, by, '╰', cyan);
-    blit(buf, mx + 1, by, &"─".repeat(fill_n), fill_n, cyan);
-    blit(buf, mx + 1 + fill_n as u16, by, &status_text, st_w, rev);
+    if let Some(ref s) = app.search {
+        // 検索バーを底辺ボーダーに埋め込む
+        let search_prefix = "/ ";
+        let prefix_w = sw(search_prefix);
+        let search_avail = (mw - 2).saturating_sub(st_w + 1);
+        let cyan2 = Style::default().fg(Color::Cyan);
+        let yellow2 = Style::default().fg(Color::Yellow);
+        blit(buf, mx + 1, by, search_prefix, prefix_w, cyan2);
+        let pat_disp_w = search_avail.saturating_sub(prefix_w);
+        let scroll = if s.cursor >= pat_disp_w { s.cursor + 1 - pat_disp_w } else { 0 };
+        blit(buf, mx + 1 + prefix_w as u16, by, &" ".repeat(pat_disp_w), pat_disp_w, yellow2);
+        let pat_chars: Vec<char> = s.input.iter().copied().collect();
+        for (i, &ch) in pat_chars[scroll..].iter().enumerate() {
+            if i >= pat_disp_w { break; }
+            let st = if scroll + i == s.cursor { rev } else { yellow2 };
+            blit_ch(buf, mx + 1 + prefix_w as u16 + i as u16, by, ch, st);
+        }
+        if s.cursor == s.input.len() && s.cursor.saturating_sub(scroll) < pat_disp_w {
+            blit_ch(buf, mx + 1 + prefix_w as u16 + (s.cursor - scroll) as u16, by, ' ', rev);
+        }
+        let sep_x = mx + 1 + search_avail as u16;
+        blit_ch(buf, sep_x, by, '─', cyan);
+        blit(buf, sep_x + 1, by, &status_text, st_w, rev);
+    } else {
+        let fill_n = (mw - 2).saturating_sub(st_w);
+        blit(buf, mx + 1, by, &"─".repeat(fill_n), fill_n, cyan);
+        blit(buf, mx + 1 + fill_n as u16, by, &status_text, st_w, rev);
+    }
     blit_ch(buf, mx + mw as u16 - 1, by, '╯', cyan);
 
     render_run_dialog(frame, app);
-    render_macro_dialog(frame, app);
+    render_func_dialog(frame, app);
     render_git_dialog(frame, app);
     render_git_running(frame, app);
     render_file_dialog(frame, app);
@@ -702,68 +727,119 @@ fn render_run_dialog(frame: &mut Frame, app: &App) {
     blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
 }
 
-// ── Macro command dialog ───────────────────────────────────────────────
+// ── 機能ダイアログ ─────────────────────────────────────────────────────
 
-fn render_macro_dialog(frame: &mut Frame, app: &App) {
-    let dlg: &MacroDialog = match app.macro_dialog.as_ref() {
+fn render_func_dialog(frame: &mut Frame, app: &App) {
+    let dlg: &FuncDialog = match app.func_dialog.as_ref() {
         Some(d) => d,
         None => return,
     };
     let area = frame.area();
-    let dw = (area.width as usize).clamp(30, 50);
+    let dw = (area.width as usize).clamp(44, 60);
+    let iw = dw - 2;
+
+    // 入力中のコマンド名を取得してフィルタリング
+    let query: String = dlg.input.iter().collect();
+    let cmd_name: &str = query.trim().splitn(2, ' ').next().unwrap_or("");
+    let filtered: Vec<&crate::app::FuncCmd> = FUNC_CMDS.iter()
+        .filter(|c| c.name.starts_with(cmd_name))
+        .collect();
+    let n_cmds = filtered.len().max(1); // 最低1行確保
+
+    // ダイアログ高さ: 枠上 + 入力行 + セパレータ + コマンド行 + ヒント行 + 枠下
+    let dh = 2 + 1 + 1 + n_cmds + 1;
     let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
-    let dy = area.height / 2 - 2;
+    let dy = ((area.height as usize).saturating_sub(dh) / 2) as u16;
 
     let buf = frame.buffer_mut();
     let cyan = app.ui_colors.border;
     let yellow = app.ui_colors.title;
     let dim = Style::default().fg(Color::DarkGray);
     let white = Style::default().fg(Color::White);
+    let green = Style::default().fg(Color::Green);
     let rev = Style::default().add_modifier(Modifier::REVERSED);
 
-    let title = if app.lang_en { " Macro " } else { " マクロ " };
+    let title = if app.lang_en { " Func " } else { " 機能 " };
     let hint = if app.lang_en {
-        "  q:Quit  Esc:Cancel"
+        "  Tab:Complete  Enter:Run  Esc:Close"
     } else {
-        "  q:終了  Esc:キャンセル"
+        "  Tab:補完  Enter:実行  Esc:閉じる"
     };
-    let prompt = ":";
-    let pw = sw(prompt);
-    let iw = dw - 2;
 
-    // Top border
+    clear_rect(buf, dx, dy, dw, dh);
+
+    // 上枠
     let fill_n = iw.saturating_sub(sw(title));
     blit_ch(buf, dx, dy, '╭', cyan);
     blit(buf, dx + 1, dy, title, sw(title), yellow);
     blit(buf, dx + 1 + sw(title) as u16, dy, &"─".repeat(fill_n), fill_n, cyan);
     blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
 
-    // Input row
+    // 入力行
+    let prompt = "> ";
+    let pw = sw(prompt);
     let input_x = dx + 1 + pw as u16;
     let input_w = iw - pw;
-    blit_ch(buf, dx, dy + 1, '│', cyan);
-    blit(buf, dx + 1, dy + 1, prompt, pw, cyan);
+    let row_input = dy + 1;
+    blit_ch(buf, dx, row_input, '│', cyan);
+    blit(buf, dx + 1, row_input, prompt, pw, cyan);
     let scroll = if dlg.cursor >= input_w { dlg.cursor + 1 - input_w } else { 0 };
-    blit(buf, input_x, dy + 1, &" ".repeat(input_w), input_w, white);
+    blit(buf, input_x, row_input, &" ".repeat(input_w), input_w, white);
     for (i, &ch) in dlg.input[scroll..].iter().enumerate() {
         if i >= input_w { break; }
         let st = if scroll + i == dlg.cursor { rev } else { white };
-        blit_ch(buf, input_x + i as u16, dy + 1, ch, st);
+        blit_ch(buf, input_x + i as u16, row_input, ch, st);
     }
-    if dlg.cursor == dlg.input.len() && dlg.cursor - scroll < input_w {
-        blit_ch(buf, input_x + (dlg.cursor - scroll) as u16, dy + 1, ' ', rev);
+    if dlg.cursor == dlg.input.len() && dlg.cursor.saturating_sub(scroll) < input_w {
+        blit_ch(buf, input_x + (dlg.cursor - scroll) as u16, row_input, ' ', rev);
     }
-    blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
+    blit_ch(buf, dx + dw as u16 - 1, row_input, '│', cyan);
 
-    // Hint row
-    blit_ch(buf, dx, dy + 2, '│', cyan);
-    blit(buf, dx + 1, dy + 2, &padr(hint, iw), iw, dim);
-    blit_ch(buf, dx + dw as u16 - 1, dy + 2, '│', cyan);
+    // セパレータ
+    let row_sep = dy + 2;
+    blit_ch(buf, dx, row_sep, '├', cyan);
+    blit(buf, dx + 1, row_sep, &"─".repeat(iw), iw, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, row_sep, '┤', cyan);
 
-    // Bottom border
-    blit_ch(buf, dx, dy + 3, '╰', cyan);
-    blit(buf, dx + 1, dy + 3, &"─".repeat(iw), iw, cyan);
-    blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
+    // コマンドリスト
+    let name_w = 10usize;
+    let args_w = 10usize;
+    let desc_w = iw.saturating_sub(name_w + args_w + 2);
+    for (i, cmd) in filtered.iter().enumerate() {
+        let y = dy + 3 + i as u16;
+        let selected = i == dlg.selected;
+        let row_style = if selected { rev } else { white };
+        let desc = if app.lang_en { cmd.desc_en } else { cmd.desc_ja };
+        blit_ch(buf, dx, y, '│', cyan);
+        if selected {
+            blit(buf, dx + 1, y, &" ".repeat(iw), iw, rev);
+        }
+        blit(buf, dx + 1, y, &padr(cmd.name, name_w), name_w, if selected { rev } else { green });
+        blit(buf, dx + 1 + name_w as u16, y, &padr(cmd.args, args_w), args_w,
+             if selected { rev } else { dim });
+        blit(buf, dx + 1 + (name_w + args_w) as u16, y,
+             &trunc(desc, desc_w), desc_w, row_style);
+        blit_ch(buf, dx + dw as u16 - 1, y, '│', cyan);
+    }
+    if filtered.is_empty() {
+        let y = dy + 3;
+        let msg = if app.lang_en { "  (no matching command)" } else { "  (該当コマンドなし)" };
+        blit_ch(buf, dx, y, '│', cyan);
+        blit(buf, dx + 1, y, &padr(msg, iw), iw, dim);
+        blit_ch(buf, dx + dw as u16 - 1, y, '│', cyan);
+    }
+
+    // ヒント行
+    let row_hint = dy + 3 + n_cmds as u16;
+    blit_ch(buf, dx, row_hint, '│', cyan);
+    blit(buf, dx + 1, row_hint, &padr(&trunc(hint, iw), iw), iw, dim);
+    blit_ch(buf, dx + dw as u16 - 1, row_hint, '│', cyan);
+
+    // 下枠
+    let row_bot = dy + dh as u16 - 1;
+    blit_ch(buf, dx, row_bot, '╰', cyan);
+    blit(buf, dx + 1, row_bot, &"─".repeat(iw), iw, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, row_bot, '╯', cyan);
 }
 
 // ── Git submenu dialog ─────────────────────────────────────────────────

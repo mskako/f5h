@@ -11,7 +11,7 @@ use crossterm::{
 };
 use std::{io::stdout, path::PathBuf, time::Duration};
 
-use app::{App, DialogKind, FileDialog, GitDialog, GitDialogState, MacroDialog, RemoteOp, RunDialog};
+use app::{App, DialogKind, FileDialog, FuncDialog, GitDialog, GitDialogState, RemoteOp, RunDialog, SearchState};
 use config::{Action, load_config, lookup_action};
 use fs_utils::{git_command_silent, git_fetch, git_merge_no_ff, git_pull, git_push, git_stash_push, git_stash_pop, open_in_program, run_command, shell_quote};
 use std::sync::mpsc;
@@ -65,71 +65,183 @@ fn main() -> Result<()> {
                 app.error_msg = None;
                 continue;
             }
-            if app.macro_dialog.is_some() {
-                // ── Macro command input ───────────────────────────
+            if app.func_dialog.is_some() {
+                // ── 機能ダイアログ ────────────────────────────────
                 match (key.code, key.modifiers) {
-                    (KeyCode::Esc, _) => app.macro_dialog = None,
+                    (KeyCode::Esc, _) => app.func_dialog = None,
                     (KeyCode::Enter, KeyModifiers::NONE) => {
-                        if let Some(ref dlg) = app.macro_dialog {
-                            let cmd: String = dlg.input.iter().collect();
-                            app.macro_dialog = None;
-                            match cmd.trim() {
+                        if let Some(ref dlg) = app.func_dialog {
+                            let line: String = dlg.input.iter().collect();
+                            let mut parts = line.trim().splitn(2, ' ');
+                            let cmd = parts.next().unwrap_or("").to_lowercase();
+                            let arg = parts.next().unwrap_or("").trim().to_string();
+                            app.func_dialog = None;
+                            match cmd.as_str() {
                                 "q" | "quit" => app.quit = true,
+                                "mv" => {
+                                    if arg.is_empty() {
+                                        app.error_msg = Some("使い方: mv <新しい名前>".to_string());
+                                    } else {
+                                        let targets = app.collect_op_targets();
+                                        if targets.is_empty() {
+                                            app.error_msg = Some("対象ファイルがありません".to_string());
+                                        } else {
+                                            // タグなし or 単一: カーソルファイルのみリネーム
+                                            let src = app.current_dir.join(&targets[0]);
+                                            let dst = app.current_dir.join(&arg);
+                                            match crate::fs_utils::move_path(&src, &dst) {
+                                                Ok(()) => app.reload(),
+                                                Err(e) => app.error_msg = Some(e.to_string()),
+                                            }
+                                        }
+                                    }
+                                }
+                                "help" => {
+                                    // ヘルプ: ダイアログを再表示（入力クリア）
+                                    app.func_dialog = Some(FuncDialog::default());
+                                }
                                 _ => {
-                                    app.error_msg =
-                                        Some(format!("不明なコマンド: {}", cmd.trim()));
+                                    app.error_msg = Some(format!("不明なコマンド: {}", cmd));
                                 }
                             }
                         }
                     }
-                    (KeyCode::Left, _) => {
-                        #[allow(clippy::collapsible_if)]
-                        if let Some(ref mut d) = app.macro_dialog {
-                            if d.cursor > 0 {
-                                d.cursor -= 1;
+                    (KeyCode::Up, _) => {
+                        if let Some(ref mut d) = app.func_dialog {
+                            if d.selected > 0 { d.selected -= 1; }
+                        }
+                    }
+                    (KeyCode::Down, _) => {
+                        if let Some(ref d) = app.func_dialog {
+                            let query: String = d.input.iter().collect();
+                            let cmd_name: &str = query.trim().splitn(2, ' ').next().unwrap_or("");
+                            let n = app::FUNC_CMDS.iter()
+                                .filter(|c| c.name.starts_with(cmd_name))
+                                .count();
+                            if d.selected + 1 < n {
+                                app.func_dialog.as_mut().unwrap().selected += 1;
                             }
+                        }
+                    }
+                    (KeyCode::Tab, _) => {
+                        // 先頭候補のコマンド名を補完
+                        if let Some(ref mut d) = app.func_dialog {
+                            let query: String = d.input.iter().collect();
+                            let cmd_name: &str = query.trim().splitn(2, ' ').next().unwrap_or("");
+                            let candidate = app::FUNC_CMDS.iter()
+                                .filter(|c| c.name.starts_with(cmd_name))
+                                .nth(d.selected);
+                            if let Some(c) = candidate {
+                                let new_input: Vec<char> = format!("{} ", c.name).chars().collect();
+                                let new_cursor = new_input.len();
+                                d.input = new_input;
+                                d.cursor = new_cursor;
+                                d.selected = 0;
+                            }
+                        }
+                    }
+                    (KeyCode::Left, _) => {
+                        if let Some(ref mut d) = app.func_dialog {
+                            if d.cursor > 0 { d.cursor -= 1; }
                         }
                     }
                     (KeyCode::Right, _) => {
-                        #[allow(clippy::collapsible_if)]
-                        if let Some(ref mut d) = app.macro_dialog {
-                            if d.cursor < d.input.len() {
-                                d.cursor += 1;
-                            }
+                        if let Some(ref mut d) = app.func_dialog {
+                            if d.cursor < d.input.len() { d.cursor += 1; }
                         }
                     }
                     (KeyCode::Home, _) => {
-                        if let Some(ref mut d) = app.macro_dialog {
-                            d.cursor = 0;
-                        }
+                        if let Some(ref mut d) = app.func_dialog { d.cursor = 0; }
                     }
                     (KeyCode::End, _) => {
-                        if let Some(ref mut d) = app.macro_dialog {
+                        if let Some(ref mut d) = app.func_dialog {
                             d.cursor = d.input.len();
                         }
                     }
                     (KeyCode::Backspace, _) => {
-                        #[allow(clippy::collapsible_if)]
-                        if let Some(ref mut d) = app.macro_dialog {
-                            if d.cursor > 0 {
-                                d.cursor -= 1;
-                                d.input.remove(d.cursor);
-                            }
+                        if let Some(ref mut d) = app.func_dialog {
+                            if d.cursor > 0 { d.cursor -= 1; d.input.remove(d.cursor); }
+                            d.selected = 0;
                         }
                     }
                     (KeyCode::Delete, _) => {
-                        #[allow(clippy::collapsible_if)]
-                        if let Some(ref mut d) = app.macro_dialog {
-                            if d.cursor < d.input.len() {
-                                d.input.remove(d.cursor);
-                            }
+                        if let Some(ref mut d) = app.func_dialog {
+                            if d.cursor < d.input.len() { d.input.remove(d.cursor); }
+                            d.selected = 0;
                         }
                     }
                     (KeyCode::Char(c), KeyModifiers::NONE)
                     | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
-                        if let Some(ref mut d) = app.macro_dialog {
+                        if let Some(ref mut d) = app.func_dialog {
                             d.input.insert(d.cursor, c);
                             d.cursor += 1;
+                            d.selected = 0;
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            // ── 検索入力モード ────────────────────────────────────
+            if app.search.is_some() {
+                match (key.code, key.modifiers) {
+                    (KeyCode::Esc, _) => {
+                        // キャンセル: 元の位置に戻る
+                        if let Some(s) = app.search.take() {
+                            app.cursor = s.origin;
+                        }
+                    }
+                    (KeyCode::Enter, KeyModifiers::NONE) => {
+                        // 確定: 検索バーを閉じ last_search を保存
+                        if let Some(s) = app.search.take() {
+                            app.last_search = s.input.iter().collect();
+                        }
+                    }
+                    (KeyCode::Left, _) => {
+                        if let Some(ref mut s) = app.search {
+                            if s.cursor > 0 { s.cursor -= 1; }
+                        }
+                    }
+                    (KeyCode::Right, _) => {
+                        if let Some(ref mut s) = app.search {
+                            if s.cursor < s.input.len() { s.cursor += 1; }
+                        }
+                    }
+                    (KeyCode::Backspace, _) => {
+                        if let Some(ref mut s) = app.search {
+                            if s.cursor > 0 {
+                                s.cursor -= 1;
+                                s.input.remove(s.cursor);
+                            }
+                        }
+                        let pat = app.search.as_ref().map(|s| s.input.iter().collect::<String>()).unwrap_or_default();
+                        if let Some(ref mut s) = app.search {
+                            s.matches = app.entries.iter().enumerate()
+                                .filter(|(_, e)| {
+                                    if e.name == ".." || pat.is_empty() { return false; }
+                                    e.name.to_lowercase().contains(&pat.to_lowercase())
+                                })
+                                .map(|(i, _)| i).collect();
+                            s.match_idx = 0;
+                            if let Some(&idx) = s.matches.first() { app.cursor = idx; }
+                        }
+                    }
+                    (KeyCode::Char(c), KeyModifiers::NONE)
+                    | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                        if let Some(ref mut s) = app.search {
+                            s.input.insert(s.cursor, c);
+                            s.cursor += 1;
+                        }
+                        let pat = app.search.as_ref().map(|s| s.input.iter().collect::<String>()).unwrap_or_default();
+                        if let Some(ref mut s) = app.search {
+                            s.matches = app.entries.iter().enumerate()
+                                .filter(|(_, e)| {
+                                    if e.name == ".." || pat.is_empty() { return false; }
+                                    e.name.to_lowercase().contains(&pat.to_lowercase())
+                                })
+                                .map(|(i, _)| i).collect();
+                            s.match_idx = 0;
+                            if let Some(&idx) = s.matches.first() { app.cursor = idx; }
                         }
                     }
                     _ => {}
@@ -1000,8 +1112,37 @@ fn main() -> Result<()> {
                         let input: Vec<char> = args.chars().collect();
                         app.run_dialog = Some(RunDialog { input, cursor: 0 });
                     }
-                    Action::Macro => {
-                        app.macro_dialog = Some(MacroDialog::default());
+                    Action::Func => {
+                        app.func_dialog = Some(FuncDialog::default());
+                    }
+                    Action::Search => {
+                        app.search = Some(SearchState {
+                            input: vec![],
+                            cursor: 0,
+                            origin: app.cursor,
+                            matches: vec![],
+                            match_idx: 0,
+                        });
+                    }
+                    Action::SearchNext => {
+                        if !app.last_search.is_empty() {
+                            let matches = app.compute_search_matches(&app.last_search.clone());
+                            if !matches.is_empty() {
+                                let next = matches.iter().position(|&i| i > app.cursor)
+                                    .unwrap_or(0);
+                                app.cursor = matches[next];
+                            }
+                        }
+                    }
+                    Action::SearchPrev => {
+                        if !app.last_search.is_empty() {
+                            let matches = app.compute_search_matches(&app.last_search.clone());
+                            if !matches.is_empty() {
+                                let prev = matches.iter().rposition(|&i| i < app.cursor)
+                                    .unwrap_or(matches.len() - 1);
+                                app.cursor = matches[prev];
+                            }
+                        }
                     }
                     Action::Git => {
                         app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });

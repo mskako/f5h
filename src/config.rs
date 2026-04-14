@@ -208,13 +208,16 @@ pub enum Action {
     TreeToggle,
     Edit,
     Run,
-    Macro,
+    Func,
     Git,
     Copy,
     Move,
     Delete,
     Rename,
     Attr,
+    Search,
+    SearchNext,
+    SearchPrev,
 }
 
 pub fn action_from_str(s: &str) -> Option<Action> {
@@ -242,13 +245,17 @@ pub fn action_from_str(s: &str) -> Option<Action> {
         "tree_toggle" => Some(Action::TreeToggle),
         "edit" => Some(Action::Edit),
         "run" => Some(Action::Run),
-        "macro" => Some(Action::Macro),
+        "func" => Some(Action::Func),
+        "macro" => Some(Action::Func), // 後方互換
         "git" => Some(Action::Git),
         "copy" => Some(Action::Copy),
         "move" => Some(Action::Move),
         "delete" => Some(Action::Delete),
         "rename" => Some(Action::Rename),
         "attr" => Some(Action::Attr),
+        "search" => Some(Action::Search),
+        "search_next" => Some(Action::SearchNext),
+        "search_prev" => Some(Action::SearchPrev),
         _ => None,
     }
 }
@@ -333,7 +340,7 @@ pub fn build_keymap(cfg_keys: &HashMap<String, String>) -> KeyMap {
         ("page_down", "PageDown"),
         ("enter", "Enter"),
         ("parent_dir", "Backspace"),
-        ("home_dir", "/"),
+        ("home_dir", "~"),
         ("tag_move", "Space"),
         ("tag_all", "Home"),
         ("quit", "q"),
@@ -346,13 +353,15 @@ pub fn build_keymap(cfg_keys: &HashMap<String, String>) -> KeyMap {
         ("tree_toggle", "t"),
         ("edit", "e"),
         ("run", "x"),
-        ("macro", ":"),
+        ("func", ":"),
         ("git", "b"),
         ("copy", "c"),
         ("move", "m"),
         ("delete", "d"),
-        ("rename", "n"),
         ("attr", "a"),
+        ("search", "/"),
+        ("search_next", "n"),
+        ("search_prev", "N"),
     ];
     let mut map = KeyMap::new();
     for &(action_str, key_str) in defaults {
@@ -378,7 +387,7 @@ pub fn build_keymap(cfg_keys: &HashMap<String, String>) -> KeyMap {
 pub static MENU_ACTIONS: &[(Action, &str, &str)] = &[
     (Action::Edit, "編集", "Edit"),
     (Action::Run, "実行", "Run"),
-    (Action::Macro, "マクロ", "Macro"),
+    (Action::Func, "機能", "Func"),
     (Action::Git, "Git", "Git"),
     (Action::TreeToggle, "ツリー", "Tree"),
     (Action::FirstEntry, "先頭", "First"),
