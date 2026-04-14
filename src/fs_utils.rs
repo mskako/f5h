@@ -882,6 +882,27 @@ mod tests {
         git(&["commit", "--allow-empty", "-m", "init"]);
     }
 
+    /// トラッキング済みファイルを変更した dirty な git リポジトリを作成する。
+    fn make_dirty_repo(dir: &std::path::Path) {
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_AUTHOR_NAME", "test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.com")
+                .env("GIT_COMMITTER_NAME", "test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.com")
+                .output()
+                .unwrap()
+        };
+        init_git_repo_for_test(dir);
+        std::fs::write(dir.join("file.txt"), "initial").unwrap();
+        git(&["add", "file.txt"]);
+        git(&["commit", "-m", "add file"]);
+        // トラッキング済みファイルを変更して dirty 状態にする
+        std::fs::write(dir.join("file.txt"), "modified").unwrap();
+    }
+
     #[test]
     fn test_git_fetch_errors_on_non_repo() {
         let dir = tempdir().unwrap();
@@ -924,6 +945,55 @@ mod tests {
         let dir = tempdir().unwrap();
         init_git_repo_for_test(dir.path());
         let err = git_pull(dir.path(), "").unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    // ── git_stash_push / git_stash_pop ────────────────────────────────
+
+    #[test]
+    fn test_git_stash_push_no_message_reverts_changes() {
+        let dir = tempdir().unwrap();
+        make_dirty_repo(dir.path());
+        // stash push（メッセージなし）が成功する
+        git_stash_push("", dir.path()).unwrap();
+        // ファイルが stash 前の状態（"initial"）に戻っている
+        let content = std::fs::read_to_string(dir.path().join("file.txt")).unwrap();
+        assert_eq!(content, "initial");
+    }
+
+    #[test]
+    fn test_git_stash_push_with_message_reverts_changes() {
+        let dir = tempdir().unwrap();
+        make_dirty_repo(dir.path());
+        git_stash_push("WIP: my work", dir.path()).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("file.txt")).unwrap();
+        assert_eq!(content, "initial");
+    }
+
+    #[test]
+    fn test_git_stash_pop_restores_changes() {
+        let dir = tempdir().unwrap();
+        make_dirty_repo(dir.path());
+        git_stash_push("", dir.path()).unwrap();
+        // pop して変更が復元されることを確認
+        git_stash_pop(dir.path()).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("file.txt")).unwrap();
+        assert_eq!(content, "modified");
+    }
+
+    #[test]
+    fn test_git_stash_push_errors_on_non_repo() {
+        let dir = tempdir().unwrap();
+        let err = git_stash_push("", dir.path()).unwrap_err().to_string();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn test_git_stash_pop_errors_on_empty_stash() {
+        let dir = tempdir().unwrap();
+        init_git_repo_for_test(dir.path());
+        // stash が空の場合はエラーになる
+        let err = git_stash_pop(dir.path()).unwrap_err().to_string();
         assert!(!err.is_empty());
     }
 

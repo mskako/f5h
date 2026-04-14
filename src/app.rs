@@ -1990,4 +1990,60 @@ mod tests {
             );
         }
     }
+
+    // ── GitDialog / GitDialogState ─────────────────────────────────────
+
+    #[test]
+    fn test_git_dialog_stash_msg_initial_state() {
+        let state = GitDialogState::StashMsg { input: vec![], cursor: 0 };
+        if let GitDialogState::StashMsg { input, cursor } = state {
+            assert!(input.is_empty());
+            assert_eq!(cursor, 0);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_git_dialog_stash_msg_with_content() {
+        let chars: Vec<char> = "wip".chars().collect();
+        let state = GitDialogState::StashMsg { input: chars.clone(), cursor: 3 };
+        if let GitDialogState::StashMsg { input, cursor } = state {
+            assert_eq!(input, chars);
+            assert_eq!(cursor, 3);
+        } else {
+            panic!("wrong variant");
+        }
+    }
+
+    #[test]
+    fn test_git_dialog_none_by_default() {
+        let dir = tempdir().unwrap();
+        let app = make_test_app(dir.path().to_path_buf());
+        assert!(app.git_dialog.is_none());
+    }
+
+    #[test]
+    fn test_git_dialog_open_sets_menu_state() {
+        let dir = tempdir().unwrap();
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });
+        assert!(matches!(
+            app.git_dialog.as_ref().unwrap().state,
+            GitDialogState::Menu
+        ));
+    }
+
+    #[test]
+    fn test_git_dialog_transition_to_stash_msg() {
+        let dir = tempdir().unwrap();
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.git_dialog = Some(GitDialog {
+            state: GitDialogState::StashMsg { input: vec![], cursor: 0 },
+        });
+        assert!(matches!(
+            app.git_dialog.as_ref().unwrap().state,
+            GitDialogState::StashMsg { .. }
+        ));
+    }
 }

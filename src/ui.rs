@@ -58,6 +58,15 @@ pub fn blit(buf: &mut Buffer, x: u16, y: u16, text: &str, max_cols: usize, style
     buf.set_string(x, y, trunc(text, max_cols), style);
 }
 
+/// ダイアログ背景を空白で塗りつぶす（透け防止）
+fn clear_rect(buf: &mut Buffer, x: u16, y: u16, w: usize, h: usize) {
+    let blank = " ".repeat(w);
+    let sty = Style::default();
+    for row in 0..h as u16 {
+        blit(buf, x, y + row, &blank, w, sty);
+    }
+}
+
 pub fn blit_ch(buf: &mut Buffer, x: u16, y: u16, ch: char, style: Style) {
     if let Some(cell) = buf.cell_mut(Position::new(x, y)) {
         cell.set_char(ch);
@@ -800,6 +809,7 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
             let hint = if app.lang_en { "  Esc:Cancel" } else { "  Esc:キャンセル" };
             let total_rows = rows.len() + 2; // top + rows + hint + bottom
 
+            clear_rect(buf, dx, dy, dw, total_rows + 1);
             blit_ch(buf, dx, dy, '╭', cyan);
             blit(buf, dx + 1, dy, title, sw(title), yellow);
             blit(buf, dx + 1 + sw(title) as u16, dy, &"─".repeat(iw.saturating_sub(sw(title))), iw.saturating_sub(sw(title)), cyan);
@@ -856,6 +866,7 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
             let input_w = iw - pw;
             let input_x = dx + 1 + pw as u16;
 
+            clear_rect(buf, dx, dy, dw, 4);
             blit_ch(buf, dx, dy, '╭', cyan);
             blit(buf, dx + 1, dy, title, sw(title), yellow);
             blit(buf, dx + 1 + sw(title) as u16, dy, &"─".repeat(iw.saturating_sub(sw(title))), iw.saturating_sub(sw(title)), cyan);
@@ -1873,5 +1884,49 @@ mod tests {
     fn test_fmt_size_tb() {
         let tb = 2_000_000_000_000u64;
         assert_eq!(fmt_size(tb), "2.0TB");
+    }
+
+    // ── clear_rect ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_clear_rect_fills_interior_with_spaces() {
+        use ratatui::prelude::{Buffer, Position, Rect};
+        let mut buf = Buffer::empty(Rect { x: 0, y: 0, width: 10, height: 5 });
+        // バッファ全体を 'X' で埋める
+        for y in 0..5u16 {
+            for x in 0..10u16 {
+                buf.cell_mut(Position::new(x, y)).unwrap().set_char('X');
+            }
+        }
+        // (2, 1) から幅 6、高さ 2 をクリア
+        clear_rect(&mut buf, 2, 1, 6, 2);
+        // クリア範囲は空白になっている
+        for row in 1..3u16 {
+            for col in 2..8u16 {
+                assert_eq!(
+                    buf.cell(Position::new(col, row)).unwrap().symbol(),
+                    " ",
+                    "cell ({col},{row}) should be space"
+                );
+            }
+        }
+        // クリア範囲外は 'X' のまま
+        assert_eq!(buf.cell(Position::new(0, 0)).unwrap().symbol(), "X");
+        assert_eq!(buf.cell(Position::new(9, 4)).unwrap().symbol(), "X");
+        assert_eq!(buf.cell(Position::new(1, 1)).unwrap().symbol(), "X"); // クリア範囲の左外
+        assert_eq!(buf.cell(Position::new(8, 2)).unwrap().symbol(), "X"); // クリア範囲の右外
+    }
+
+    #[test]
+    fn test_clear_rect_zero_height_is_noop() {
+        use ratatui::prelude::{Buffer, Position, Rect};
+        let mut buf = Buffer::empty(Rect { x: 0, y: 0, width: 5, height: 3 });
+        for y in 0..3u16 {
+            for x in 0..5u16 {
+                buf.cell_mut(Position::new(x, y)).unwrap().set_char('X');
+            }
+        }
+        clear_rect(&mut buf, 0, 0, 5, 0); // 高さ 0 → 何もしない
+        assert_eq!(buf.cell(Position::new(0, 0)).unwrap().symbol(), "X");
     }
 }
