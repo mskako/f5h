@@ -1525,7 +1525,6 @@ fn render_error_msg(frame: &mut Frame, app: &App) {
     let red = Style::default().fg(Color::Red);
     let white = Style::default().fg(Color::White);
     let dim = Style::default().fg(Color::DarkGray);
-    let cyan = app.ui_colors.border;
     let yellow = app.ui_colors.title;
 
     let title = if app.lang_en { " Error " } else { " エラー " };
@@ -1535,27 +1534,27 @@ fn render_error_msg(frame: &mut Frame, app: &App) {
 
     let title_w = sw(title);
     let fill_n = iw.saturating_sub(title_w);
-    blit_ch(buf, dx, dy, '╭', cyan);
+    blit_ch(buf, dx, dy, '╭', red);
     blit(buf, dx + 1, dy, title, title_w, yellow);
     blit(buf, dx + 1 + title_w as u16, dy, &"─".repeat(fill_n), fill_n, red);
-    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
+    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', red);
 
     for (i, line) in lines.iter().enumerate() {
         let y = dy + 1 + i as u16;
-        blit_ch(buf, dx, y, '│', cyan);
+        blit_ch(buf, dx, y, '│', red);
         blit(buf, dx + 1, y, &padr(&trunc(line, iw), iw), iw, white);
-        blit_ch(buf, dx + dw as u16 - 1, y, '│', cyan);
+        blit_ch(buf, dx + dw as u16 - 1, y, '│', red);
     }
 
     let hy = dy + 1 + n_lines as u16;
-    blit_ch(buf, dx, hy, '│', cyan);
+    blit_ch(buf, dx, hy, '│', red);
     blit(buf, dx + 1, hy, &padr(&trunc(hint, iw), iw), iw, dim);
-    blit_ch(buf, dx + dw as u16 - 1, hy, '│', cyan);
+    blit_ch(buf, dx + dw as u16 - 1, hy, '│', red);
 
     let by = dy + dh as u16 - 1;
-    blit_ch(buf, dx, by, '╰', cyan);
-    blit(buf, dx + 1, by, &"─".repeat(iw), iw, cyan);
-    blit_ch(buf, dx + dw as u16 - 1, by, '╯', cyan);
+    blit_ch(buf, dx, by, '╰', red);
+    blit(buf, dx + 1, by, &"─".repeat(iw), iw, red);
+    blit_ch(buf, dx + dw as u16 - 1, by, '╯', red);
 }
 
 // ── Tree pane ──────────────────────────────────────────────────────────
