@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Git submenu dialog (`b` key) with the following operations:
+  - `a` / `A` — `git add` (cursor/tagged files) / `git add .`
+  - `c` — commit with message input
+  - `f` — `git fetch origin`
+  - `p` / `P` — push / pull (fetch + rebase)
+  - `m` — `git merge --no-ff @{u}` (merge tracking branch after fetch)
+  - `s` — switch branch
+  - `t` / `T` — stash push (optional message) / stash pop
+- SSH passphrase input dialog for remote operations (fetch / push / pull); empty input uses SSH agent
+- Ahead/behind commit count displayed next to branch name in the path row (e.g. `↑3↓1`)
+
+### Changed
+
+- Pull (`P`) changed from `--ff-only` to `--rebase`; handles diverged branches without erroring out
+- Git submenu dialog widened (36 → 50 columns) to prevent description truncation
+- Error dialog now displays full multi-line git output (up to 10 lines, capped by terminal height)
+- Replaced libgit2 dependency with subprocess `git` calls for remote operations
+
+### Fixed
+
+- Error dialog border is now fully red (was inconsistently red/cyan)
+- Dialog backgrounds no longer bleed through the underlying file list (`clear_rect` added)
+
 ## [0.1.2] - 2026-04-08
 
 ### Added
