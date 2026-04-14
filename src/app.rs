@@ -11,8 +11,8 @@ use crate::config::{
     parse_file_colors,
 };
 use crate::fs_utils::{
-    copy_path, disk_stats, fmt_datetime, get_file_info, get_git_branch, get_git_status,
-    get_volume_info, move_path, resolve_name, tree_has_children, tree_list_subdirs,
+    copy_path, disk_stats, fmt_datetime, get_file_info, get_git_ahead_behind, get_git_branch,
+    get_git_status, get_volume_info, move_path, resolve_name, tree_has_children, tree_list_subdirs,
 };
 
 // ── Data structures ────────────────────────────────────────────────────
@@ -135,6 +135,8 @@ pub struct App {
     pub file_type: String,
     pub owner_s: String,
     pub git_branch: Option<String>,
+    pub git_ahead: u32,
+    pub git_behind: u32,
     pub git_status: HashMap<String, char>,
     pub ls_colors: HashMap<String, Style>,
     pub ui_colors: UiColors,
@@ -238,6 +240,8 @@ impl App {
             file_type: String::new(),
             owner_s: String::new(),
             git_branch: None,
+            git_ahead: 0,
+            git_behind: 0,
             git_status: HashMap::new(),
             show_hidden: config.display.show_hidden,
             pager,
@@ -387,6 +391,9 @@ impl App {
         self.free_bytes = free;
         self.volume_info = get_volume_info(&self.current_dir);
         self.git_branch = get_git_branch(&self.current_dir);
+        let (ahead, behind) = get_git_ahead_behind(&self.current_dir);
+        self.git_ahead = ahead;
+        self.git_behind = behind;
         self.git_status = get_git_status(&self.current_dir);
         Ok(())
     }
@@ -1108,6 +1115,8 @@ mod tests {
             file_type: String::new(),
             owner_s: String::new(),
             git_branch: None,
+            git_ahead: 0,
+            git_behind: 0,
             git_status: HashMap::new(),
             ls_colors: HashMap::new(),
             ui_colors,

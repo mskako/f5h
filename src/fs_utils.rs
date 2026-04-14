@@ -224,6 +224,24 @@ pub fn get_git_branch(path: &Path) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
+/// トラッキングブランチとの ahead / behind コミット数を返す。
+/// upstream が未設定の場合は (0, 0)。
+pub fn get_git_ahead_behind(path: &Path) -> (u32, u32) {
+    let path_s = path.to_string_lossy().into_owned();
+    let run = |extra_args: &[&str]| -> u32 {
+        let mut args = vec!["-C", &*path_s];
+        args.extend_from_slice(extra_args);
+        let Ok(o) = std::process::Command::new("git").args(&args).output() else {
+            return 0;
+        };
+        if !o.status.success() { return 0; }
+        String::from_utf8_lossy(&o.stdout).trim().parse().unwrap_or(0)
+    };
+    let ahead  = run(&["rev-list", "--count", "@{u}..HEAD"]);
+    let behind = run(&["rev-list", "--count", "HEAD..@{u}"]);
+    (ahead, behind)
+}
+
 pub fn get_git_status(path: &Path) -> HashMap<String, char> {
     let mut map = HashMap::new();
 

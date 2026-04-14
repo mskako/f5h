@@ -359,7 +359,16 @@ fn render_header(frame: &mut Frame, main_area: Rect, inner: Rect, app: &App) {
         let branch_s = app
             .git_branch
             .as_ref()
-            .map(|b| format!("  \u{E0A0} {}", b))
+            .map(|b| {
+                let mut s = format!("  \u{E0A0} {}", b);
+                match (app.git_ahead, app.git_behind) {
+                    (0, 0) => {}
+                    (a, 0) => s.push_str(&format!(" \u{2191}{}", a)),
+                    (0, b) => s.push_str(&format!(" \u{2193}{}", b)),
+                    (a, b) => s.push_str(&format!(" \u{2191}{}\u{2193}{}", a, b)),
+                }
+                s
+            })
             .unwrap_or_default();
         let branch_w = sw(&branch_s);
         let path_avail = info_w.saturating_sub(branch_w);
