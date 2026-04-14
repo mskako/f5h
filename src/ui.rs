@@ -766,9 +766,9 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
 
     match &dlg.state {
         GitDialogState::Menu => {
-            let dw: usize = 36;
+            let dw: usize = 50;
             let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
-            let dy = area.height / 2 - 4;
+            let dy = area.height / 2 - 5;
             let iw = dw - 2;
 
             let title = if app.lang_en { " Git " } else { " Git " };
@@ -781,6 +781,8 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
                     ("p", "push", "git push"),
                     ("P", "pull", "fetch + fast-forward"),
                     ("s", "switch", "switch branch"),
+                    ("t", "stash", "save working changes (optional msg)"),
+                    ("T", "stash pop", "restore latest stash"),
                 ]
             } else {
                 &[
@@ -791,6 +793,8 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
                     ("p", "push", "git push"),
                     ("P", "pull", "fetch + fast-forward"),
                     ("s", "switch", "ブランチ切替"),
+                    ("t", "stash", "作業変更を退避（メッセージ任意）"),
+                    ("T", "stash pop", "最新 stash を復元"),
                 ]
             };
             let hint = if app.lang_en { "  Esc:Cancel" } else { "  Esc:キャンセル" };
@@ -806,7 +810,7 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
                 blit_ch(buf, dx, y, '│', cyan);
                 blit(buf, dx + 1, y, key, 1, green);
                 blit(buf, dx + 2, y, "  ", 2, white);
-                let cmd_w = 8;
+                let cmd_w = 9;
                 blit(buf, dx + 4, y, &padr(cmd, cmd_w), cmd_w, white);
                 blit(buf, dx + 4 + cmd_w as u16, y, &trunc(desc, iw - 4 - cmd_w), iw - 4 - cmd_w, dim);
                 blit_ch(buf, dx + dw as u16 - 1, y, '│', cyan);
@@ -823,24 +827,31 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
             blit_ch(buf, dx + dw as u16 - 1, by, '╯', cyan);
         }
 
-        GitDialogState::CommitMsg { input, cursor } | GitDialogState::SwitchBranch { input, cursor } => {
+        GitDialogState::CommitMsg { input, cursor }
+        | GitDialogState::SwitchBranch { input, cursor }
+        | GitDialogState::StashMsg { input, cursor } => {
             let is_commit = matches!(dlg.state, GitDialogState::CommitMsg { .. });
-            let dw = (area.width as usize).clamp(36, 64);
+            let is_stash = matches!(dlg.state, GitDialogState::StashMsg { .. });
+            let dw = (area.width as usize).clamp(50, 70);
             let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
             let dy = area.height / 2 - 2;
             let iw = dw - 2;
 
             let title = if is_commit {
                 if app.lang_en { " Git commit " } else { " Git commit " }
+            } else if is_stash {
+                if app.lang_en { " Git stash " } else { " Git stash " }
             } else {
                 if app.lang_en { " Git switch " } else { " Git switch " }
             };
-            let hint = if app.lang_en {
+            let hint = if is_stash {
+                if app.lang_en { "  Enter:Run(empty=no msg)  Esc:Back" } else { "  Enter:実行(空=メッセージなし)  Esc:戻る" }
+            } else if app.lang_en {
                 "  Enter:Run  Esc:Back"
             } else {
                 "  Enter:実行  Esc:戻る"
             };
-            let prompt = if is_commit { "msg: " } else { "branch: " };
+            let prompt = if is_commit { "msg: " } else if is_stash { "msg: " } else { "branch: " };
             let pw = sw(prompt);
             let input_w = iw - pw;
             let input_x = dx + 1 + pw as u16;

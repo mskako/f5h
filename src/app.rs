@@ -60,6 +60,8 @@ pub enum GitDialogState {
     Menu,
     CommitMsg { input: Vec<char>, cursor: usize },
     SwitchBranch { input: Vec<char>, cursor: usize },
+    /// stash push メッセージ入力（空可）
+    StashMsg { input: Vec<char>, cursor: usize },
     /// SSH パスフレーズ入力（空 = SSHエージェント試行）
     Passphrase { op: RemoteOp, input: Vec<char>, cursor: usize },
 }
