@@ -1504,10 +1504,22 @@ fn render_error_msg(frame: &mut Frame, app: &App) {
         None => return,
     };
     let area = frame.area();
-    let dw = (area.width as usize).clamp(40, 72);
-    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
-    let dy = ((area.height as usize).saturating_sub(4) / 2) as u16;
+    let dw = (area.width as usize).clamp(40, (area.width as usize).min(80));
     let iw = dw - 2;
+
+    // メッセージを行分割し、空行を除去して最大行数に制限する
+    let max_lines = ((area.height as usize).saturating_sub(6) / 2).clamp(1, 10);
+    let lines: Vec<&str> = msg
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(max_lines)
+        .collect();
+    let n_lines = lines.len().max(1);
+
+    // ダイアログ高さ: 上枠 + メッセージ行 + ヒント行 + 下枠
+    let dh = n_lines + 3;
+    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+    let dy = ((area.height as usize).saturating_sub(dh) / 2) as u16;
 
     let buf = frame.buffer_mut();
     let red = Style::default().fg(Color::Red);
@@ -1516,42 +1528,34 @@ fn render_error_msg(frame: &mut Frame, app: &App) {
     let cyan = app.ui_colors.border;
     let yellow = app.ui_colors.title;
 
-    let title = if app.lang_en {
-        " Error "
-    } else {
-        " エラー "
-    };
-    let hint = if app.lang_en {
-        "  Press any key to close"
-    } else {
-        "  任意のキーで閉じる"
-    };
+    let title = if app.lang_en { " Error " } else { " エラー " };
+    let hint = if app.lang_en { "  Press any key to close" } else { "  任意のキーで閉じる" };
+
+    clear_rect(buf, dx, dy, dw, dh);
 
     let title_w = sw(title);
     let fill_n = iw.saturating_sub(title_w);
     blit_ch(buf, dx, dy, '╭', cyan);
     blit(buf, dx + 1, dy, title, title_w, yellow);
-    blit(
-        buf,
-        dx + 1 + title_w as u16,
-        dy,
-        &"─".repeat(fill_n),
-        fill_n,
-        red,
-    );
+    blit(buf, dx + 1 + title_w as u16, dy, &"─".repeat(fill_n), fill_n, red);
     blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
 
-    blit_ch(buf, dx, dy + 1, '│', cyan);
-    blit(buf, dx + 1, dy + 1, &padr(&trunc(msg, iw), iw), iw, white);
-    blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
+    for (i, line) in lines.iter().enumerate() {
+        let y = dy + 1 + i as u16;
+        blit_ch(buf, dx, y, '│', cyan);
+        blit(buf, dx + 1, y, &padr(&trunc(line, iw), iw), iw, white);
+        blit_ch(buf, dx + dw as u16 - 1, y, '│', cyan);
+    }
 
-    blit_ch(buf, dx, dy + 2, '│', cyan);
-    blit(buf, dx + 1, dy + 2, &padr(&trunc(hint, iw), iw), iw, dim);
-    blit_ch(buf, dx + dw as u16 - 1, dy + 2, '│', cyan);
+    let hy = dy + 1 + n_lines as u16;
+    blit_ch(buf, dx, hy, '│', cyan);
+    blit(buf, dx + 1, hy, &padr(&trunc(hint, iw), iw), iw, dim);
+    blit_ch(buf, dx + dw as u16 - 1, hy, '│', cyan);
 
-    blit_ch(buf, dx, dy + 3, '╰', cyan);
-    blit(buf, dx + 1, dy + 3, &"─".repeat(iw), iw, cyan);
-    blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
+    let by = dy + dh as u16 - 1;
+    blit_ch(buf, dx, by, '╰', cyan);
+    blit(buf, dx + 1, by, &"─".repeat(iw), iw, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, by, '╯', cyan);
 }
 
 // ── Tree pane ──────────────────────────────────────────────────────────
