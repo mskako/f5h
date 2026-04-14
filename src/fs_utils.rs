@@ -491,9 +491,14 @@ pub fn git_push(dir: &Path, passphrase: &str) -> Result<()> {
     git_remote_cmd(&["push", "origin", &branch], dir, passphrase)
 }
 
-/// fetch してから fast-forward マージを試みる（non-ff の場合はエラー）
+/// fetch してから rebase する（pull --rebase）
 pub fn git_pull(dir: &Path, passphrase: &str) -> Result<()> {
-    git_remote_cmd(&["pull", "--ff-only"], dir, passphrase)
+    git_remote_cmd(&["pull", "--rebase"], dir, passphrase)
+}
+
+/// fetch 済みの tracking branch を --no-ff でマージする（ネットワーク不要）
+pub fn git_merge_no_ff(dir: &Path) -> Result<()> {
+    git_command_silent(&["merge", "--no-ff", "@{u}"], dir)
 }
 
 /// 作業ツリーを stash に退避する（msg 空なら -m なし）

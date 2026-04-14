@@ -13,7 +13,7 @@ use std::{io::stdout, path::PathBuf, time::Duration};
 
 use app::{App, DialogKind, FileDialog, GitDialog, GitDialogState, MacroDialog, RemoteOp, RunDialog};
 use config::{Action, load_config, lookup_action};
-use fs_utils::{git_command_silent, git_fetch, git_pull, git_push, git_stash_push, git_stash_pop, open_in_program, run_command, shell_quote};
+use fs_utils::{git_command_silent, git_fetch, git_merge_no_ff, git_pull, git_push, git_stash_push, git_stash_pop, open_in_program, run_command, shell_quote};
 use std::sync::mpsc;
 use ui::HEADER_ROWS;
 
@@ -224,6 +224,13 @@ fn main() -> Result<()> {
                                         cursor: 0,
                                     },
                                 });
+                            }
+                            (KeyCode::Char('m'), KeyModifiers::NONE) => {
+                                app.git_dialog = None;
+                                match git_merge_no_ff(&app.current_dir) {
+                                    Ok(()) => app.reload(),
+                                    Err(e) => app.error_msg = Some(e.to_string()),
+                                }
                             }
                             (KeyCode::Char('t'), KeyModifiers::NONE) => {
                                 app.git_dialog = Some(GitDialog {
