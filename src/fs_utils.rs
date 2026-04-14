@@ -478,6 +478,20 @@ pub fn git_pull(dir: &Path, passphrase: &str) -> Result<()> {
     git_remote_cmd(&["pull", "--ff-only"], dir, passphrase)
 }
 
+/// 作業ツリーを stash に退避する（msg 空なら -m なし）
+pub fn git_stash_push(msg: &str, dir: &Path) -> Result<()> {
+    if msg.trim().is_empty() {
+        git_command_silent(&["stash", "push"], dir)
+    } else {
+        git_command_silent(&["stash", "push", "-m", msg], dir)
+    }
+}
+
+/// 最新の stash を復元する
+pub fn git_stash_pop(dir: &Path) -> Result<()> {
+    git_command_silent(&["stash", "pop"], dir)
+}
+
 pub fn run_command(cmd: &str, dir: &Path) -> Result<()> {
     use crossterm::event::{self, Event};
     disable_raw_mode()?;

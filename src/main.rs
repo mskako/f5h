@@ -13,7 +13,7 @@ use std::{io::stdout, path::PathBuf, time::Duration};
 
 use app::{App, DialogKind, FileDialog, GitDialog, GitDialogState, MacroDialog, RemoteOp, RunDialog};
 use config::{Action, load_config, lookup_action};
-use fs_utils::{git_command_silent, git_fetch, git_pull, git_push, open_in_program, run_command, shell_quote};
+use fs_utils::{git_command_silent, git_fetch, git_pull, git_push, git_stash_push, git_stash_pop, open_in_program, run_command, shell_quote};
 use std::sync::mpsc;
 use ui::HEADER_ROWS;
 
@@ -225,6 +225,22 @@ fn main() -> Result<()> {
                                     },
                                 });
                             }
+                            (KeyCode::Char('t'), KeyModifiers::NONE) => {
+                                app.git_dialog = Some(GitDialog {
+                                    state: GitDialogState::StashMsg {
+                                        input: vec![],
+                                        cursor: 0,
+                                    },
+                                });
+                            }
+                            (KeyCode::Char('T'), KeyModifiers::NONE)
+                            | (KeyCode::Char('T'), KeyModifiers::SHIFT) => {
+                                app.git_dialog = None;
+                                match git_stash_pop(&app.current_dir) {
+                                    Ok(()) => app.reload(),
+                                    Err(e) => app.error_msg = Some(e.to_string()),
+                                }
+                            }
                             _ => {}
                         }
                     }
@@ -339,6 +355,61 @@ fn main() -> Result<()> {
                             (KeyCode::Char(c), KeyModifiers::NONE)
                             | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
                                 if let Some(GitDialog { state: GitDialogState::SwitchBranch { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    input.insert(*cursor, c);
+                                    *cursor += 1;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Some(GitDialogState::StashMsg { .. }) => {
+                        match (key.code, key.modifiers) {
+                            (KeyCode::Esc, _) => {
+                                app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });
+                            }
+                            (KeyCode::Enter, KeyModifiers::NONE) => {
+                                let msg: String = app.git_dialog.as_ref()
+                                    .and_then(|d| if let GitDialogState::StashMsg { ref input, .. } = d.state { Some(input.iter().collect()) } else { None })
+                                    .unwrap_or_default();
+                                app.git_dialog = None;
+                                match git_stash_push(&msg, &app.current_dir) {
+                                    Ok(()) => app.reload(),
+                                    Err(e) => app.error_msg = Some(e.to_string()),
+                                }
+                            }
+                            (KeyCode::Left, _) => {
+                                if let Some(GitDialog { state: GitDialogState::StashMsg { ref mut cursor, .. } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; }
+                                }
+                            }
+                            (KeyCode::Right, _) => {
+                                if let Some(GitDialog { state: GitDialogState::StashMsg { ref input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor < input.len() { *cursor += 1; }
+                                }
+                            }
+                            (KeyCode::Home, _) => {
+                                if let Some(GitDialog { state: GitDialogState::StashMsg { ref mut cursor, .. } }) = app.git_dialog {
+                                    *cursor = 0;
+                                }
+                            }
+                            (KeyCode::End, _) => {
+                                if let Some(GitDialog { state: GitDialogState::StashMsg { ref input, ref mut cursor } }) = app.git_dialog {
+                                    *cursor = input.len();
+                                }
+                            }
+                            (KeyCode::Backspace, _) => {
+                                if let Some(GitDialog { state: GitDialogState::StashMsg { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor > 0 { *cursor -= 1; input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Delete, _) => {
+                                if let Some(GitDialog { state: GitDialogState::StashMsg { ref mut input, ref mut cursor } }) = app.git_dialog {
+                                    if *cursor < input.len() { input.remove(*cursor); }
+                                }
+                            }
+                            (KeyCode::Char(c), KeyModifiers::NONE)
+                            | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                                if let Some(GitDialog { state: GitDialogState::StashMsg { ref mut input, ref mut cursor } }) = app.git_dialog {
                                     input.insert(*cursor, c);
                                     *cursor += 1;
                                 }
