@@ -35,6 +35,11 @@ fn main() -> Result<()> {
                     app.git_running = false;
                     git_task = None;
                     app.reload();
+                    app.success_msg = Some(if app.lang_en {
+                        "Git operation completed successfully.".to_string()
+                    } else {
+                        "Git 操作が完了しました。".to_string()
+                    });
                 }
                 Ok(Err(e)) => {
                     app.git_running = false;
@@ -63,6 +68,16 @@ fn main() -> Result<()> {
             // エラーダイアログ表示中は任意のキーで閉じる
             if app.error_msg.is_some() {
                 app.error_msg = None;
+                continue;
+            }
+            // 成功ダイアログ表示中は任意のキーで閉じる
+            if app.success_msg.is_some() {
+                app.success_msg = None;
+                continue;
+            }
+            // ヘルプオーバーレイ表示中は任意のキーで閉じる
+            if app.show_help {
+                app.show_help = false;
                 continue;
             }
             if app.func_dialog.is_some() {
@@ -280,7 +295,14 @@ fn main() -> Result<()> {
                                         .chain(targets.iter().map(|s| s.as_str()))
                                         .collect();
                                     match git_command_silent(&args, &app.current_dir) {
-                                        Ok(()) => app.reload(),
+                                        Ok(()) => {
+                                            app.reload();
+                                            app.success_msg = Some(if app.lang_en {
+                                                format!("{} file(s) added.", targets.len())
+                                            } else {
+                                                format!("{} 件をステージしました。", targets.len())
+                                            });
+                                        }
                                         Err(e) => app.error_msg = Some(e.to_string()),
                                     }
                                 }
@@ -289,7 +311,14 @@ fn main() -> Result<()> {
                             | (KeyCode::Char('A'), KeyModifiers::SHIFT) => {
                                 app.git_dialog = None;
                                 match git_command_silent(&["add", "."], &app.current_dir) {
-                                    Ok(()) => app.reload(),
+                                    Ok(()) => {
+                                        app.reload();
+                                        app.success_msg = Some(if app.lang_en {
+                                            "All changes staged.".to_string()
+                                        } else {
+                                            "全変更をステージしました。".to_string()
+                                        });
+                                    }
                                     Err(e) => app.error_msg = Some(e.to_string()),
                                 }
                             }
@@ -340,7 +369,14 @@ fn main() -> Result<()> {
                             (KeyCode::Char('m'), KeyModifiers::NONE) => {
                                 app.git_dialog = None;
                                 match git_merge_no_ff(&app.current_dir) {
-                                    Ok(()) => app.reload(),
+                                    Ok(()) => {
+                                        app.reload();
+                                        app.success_msg = Some(if app.lang_en {
+                                            "Merge completed.".to_string()
+                                        } else {
+                                            "マージが完了しました。".to_string()
+                                        });
+                                    }
                                     Err(e) => app.error_msg = Some(e.to_string()),
                                 }
                             }
@@ -356,7 +392,14 @@ fn main() -> Result<()> {
                             | (KeyCode::Char('T'), KeyModifiers::SHIFT) => {
                                 app.git_dialog = None;
                                 match git_stash_pop(&app.current_dir) {
-                                    Ok(()) => app.reload(),
+                                    Ok(()) => {
+                                        app.reload();
+                                        app.success_msg = Some(if app.lang_en {
+                                            "Stash popped.".to_string()
+                                        } else {
+                                            "スタッシュを取り出しました。".to_string()
+                                        });
+                                    }
                                     Err(e) => app.error_msg = Some(e.to_string()),
                                 }
                             }
@@ -377,7 +420,14 @@ fn main() -> Result<()> {
                                     app.error_msg = Some("コミットメッセージを入力してください".to_string());
                                 } else {
                                     match git_command_silent(&["commit", "-m", &msg], &app.current_dir) {
-                                        Ok(()) => app.reload(),
+                                        Ok(()) => {
+                                            app.reload();
+                                            app.success_msg = Some(if app.lang_en {
+                                                "Committed.".to_string()
+                                            } else {
+                                                "コミットしました。".to_string()
+                                            });
+                                        }
                                         Err(e) => app.error_msg = Some(e.to_string()),
                                     }
                                 }
@@ -436,7 +486,14 @@ fn main() -> Result<()> {
                                     app.error_msg = Some("ブランチ名を入力してください".to_string());
                                 } else {
                                     match git_command_silent(&["switch", branch.trim()], &app.current_dir) {
-                                        Ok(()) => app.reload(),
+                                        Ok(()) => {
+                                            app.reload();
+                                            app.success_msg = Some(if app.lang_en {
+                                                format!("Switched to branch '{}'.", branch.trim())
+                                            } else {
+                                                format!("ブランチ '{}' に切り替えました。", branch.trim())
+                                            });
+                                        }
                                         Err(e) => app.error_msg = Some(e.to_string()),
                                     }
                                 }
@@ -492,7 +549,14 @@ fn main() -> Result<()> {
                                     .unwrap_or_default();
                                 app.git_dialog = None;
                                 match git_stash_push(&msg, &app.current_dir) {
-                                    Ok(()) => app.reload(),
+                                    Ok(()) => {
+                                        app.reload();
+                                        app.success_msg = Some(if app.lang_en {
+                                            "Stash saved.".to_string()
+                                        } else {
+                                            "スタッシュに保存しました。".to_string()
+                                        });
+                                    }
                                     Err(e) => app.error_msg = Some(e.to_string()),
                                 }
                             }
@@ -1008,6 +1072,8 @@ fn main() -> Result<()> {
                     (KeyCode::Char('q'), KeyModifiers::NONE) => app.quit = true,
                     _ => {}
                 }
+            } else if key.code == KeyCode::F(1) && key.modifiers == KeyModifiers::NONE {
+                app.show_help = true;
             } else if let Some(action) = lookup_action(&app.keymap, key.code, key.modifiers) {
                 // ── Main keymap dispatch ──────────────────────────
                 match action {

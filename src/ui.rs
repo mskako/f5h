@@ -8,8 +8,6 @@ use crate::fs_utils::now_str;
 
 /// Left section (ボリューム情報) fixed display width
 pub const LEFT_W: usize = 28;
-/// Tree pane width (when tree is open)
-pub const TREE_W: usize = 22;
 /// Inner rows occupied by the info header (before the file list)
 pub const HEADER_ROWS: u16 = 7;
 
@@ -187,7 +185,8 @@ pub fn ui(frame: &mut Frame, app: &App) {
     render_header(frame, main_area, inner, app);
 
     if app.tree_open {
-        let tw = TREE_W.min(list_area.width as usize / 2);
+        // ツリー幅 = 画面幅の約20%（最小10、最大40）
+        let tw = (iw / 5).clamp(10, 40).min(list_area.width as usize / 2);
         let sep_x = list_area.x + tw as u16;
         let tree_area = Rect::new(list_area.x, list_area.y, tw as u16, list_area.height);
         let file_area = Rect::new(
@@ -275,6 +274,8 @@ pub fn ui(frame: &mut Frame, app: &App) {
     render_git_running(frame, app);
     render_file_dialog(frame, app);
     render_error_msg(frame, app);
+    render_success_msg(frame, app);
+    render_help_overlay(frame, app);
 }
 
 // ── Menu bar ───────────────────────────────────────────────────────────
@@ -1635,6 +1636,147 @@ fn render_error_msg(frame: &mut Frame, app: &App) {
     blit_ch(buf, dx + dw as u16 - 1, by, '╯', red);
 }
 
+// ── Success dialog ────────────────────────────────────────────────────
+
+fn render_success_msg(frame: &mut Frame, app: &App) {
+    let msg = match app.success_msg.as_deref() {
+        Some(m) => m,
+        None => return,
+    };
+    let area = frame.area();
+    let dw = sw(msg).clamp(24, (area.width as usize).min(60)) + 4;
+    let iw = dw - 2;
+    let dh = 3; // 上枠 + メッセージ行 + 下枠
+    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+    let dy = ((area.height as usize).saturating_sub(dh) / 2) as u16;
+
+    let buf = frame.buffer_mut();
+    let green = Style::default().fg(Color::Green);
+    let white = Style::default().fg(Color::White);
+
+    let title = if app.lang_en { " Done " } else { " 完了 " };
+    let title_w = sw(title);
+    let fill_n = iw.saturating_sub(title_w);
+
+    clear_rect(buf, dx, dy, dw, dh);
+
+    blit_ch(buf, dx, dy, '╭', green);
+    blit(buf, dx + 1, dy, title, title_w, app.ui_colors.title);
+    blit(buf, dx + 1 + title_w as u16, dy, &"─".repeat(fill_n), fill_n, green);
+    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', green);
+
+    let my = dy + 1;
+    blit_ch(buf, dx, my, '│', green);
+    blit(buf, dx + 1, my, &padr(&trunc(msg, iw), iw), iw, white);
+    blit_ch(buf, dx + dw as u16 - 1, my, '│', green);
+
+    let by = dy + dh as u16 - 1;
+    blit_ch(buf, dx, by, '╰', green);
+    blit(buf, dx + 1, by, &"─".repeat(iw), iw, green);
+    blit_ch(buf, dx + dw as u16 - 1, by, '╯', green);
+}
+
+// ── Help overlay ──────────────────────────────────────────────────────
+
+fn render_help_overlay(frame: &mut Frame, app: &App) {
+    if !app.show_help {
+        return;
+    }
+    let area = frame.area();
+    let dw = (area.width as usize).min(60);
+    let iw = dw - 2;
+
+    // ヘルプ内容: (キー表示, 説明)
+    let entries: &[(&str, &str, &str)] = &[
+        // 見出し
+        ("", "── Navigation ──", "── ナビゲーション ──"),
+        ("j/k", "Move up/down", "上/下に移動"),
+        ("h/l", "Move left/right (column)", "左/右の列に移動"),
+        ("g/G", "First/last entry", "先頭/末尾へ"),
+        ("PageUp/Dn", "Previous/next page", "前/次ページ"),
+        ("Enter", "Enter dir / open file", "ディレクトリ移動/ファイルを開く"),
+        ("Backspace", "Parent directory", "親ディレクトリへ"),
+        ("~", "Home directory", "ホームへ"),
+        ("Space", "Tag + move down", "タグ付け + 1つ下"),
+        ("Home", "Toggle tag all", "全タグをトグル"),
+        ("!/@ /#/%", "1/2/3/5 columns", "1/2/3/5 列表示"),
+        ("Tab", "Toggle tree pane", "ツリーペイン トグル"),
+        ("", "── File Ops ──", "── ファイル操作 ──"),
+        ("c", "Copy", "複写"),
+        ("m", "Move", "移動"),
+        ("d", "Delete", "削除"),
+        ("a", "Permissions (chmod)", "権限変更"),
+        ("e", "Open in editor", "エディタで開く"),
+        ("K", "Make directory", "ディレクトリ作成"),
+        ("", "── Search/Func ──", "── 検索/機能 ──"),
+        ("/", "Incremental search", "ファイル名検索"),
+        ("n/N", "Next/prev match", "次/前のマッチへ"),
+        (":", "Func dialog (:mv :q :help)", "機能ダイアログ"),
+        ("", "── Git ──", "── Git ──"),
+        ("b", "Open git submenu", "Git サブメニュー"),
+        ("", "── Other ──", "── その他 ──"),
+        ("F1", "This help", "このヘルプ"),
+        ("q", "Quit", "終了"),
+    ];
+
+    let dh = entries.len() + 3; // 上枠 + ヒント + 下枠
+    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+    let dy = ((area.height as usize).saturating_sub(dh) / 2) as u16;
+
+    let buf = frame.buffer_mut();
+    let bc = app.ui_colors.border;
+    let title_st = app.ui_colors.title;
+    let key_st = Style::default().fg(Color::Cyan);
+    let desc_st = Style::default().fg(Color::White);
+    let head_st = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let dim = Style::default().fg(Color::DarkGray);
+
+    clear_rect(buf, dx, dy, dw, dh);
+
+    // 上枠
+    let title = if app.lang_en { " Help " } else { " ヘルプ " };
+    let title_w = sw(title);
+    let fill_n = iw.saturating_sub(title_w);
+    blit_ch(buf, dx, dy, '╭', bc);
+    blit(buf, dx + 1, dy, title, title_w, title_st);
+    blit(buf, dx + 1 + title_w as u16, dy, &"─".repeat(fill_n), fill_n, bc);
+    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', bc);
+
+    // エントリ行
+    for (i, &(key, desc_en, desc_ja)) in entries.iter().enumerate() {
+        let y = dy + 1 + i as u16;
+        blit_ch(buf, dx, y, '│', bc);
+        if key.is_empty() {
+            // 見出し行
+            let heading = if app.lang_en { desc_en } else { desc_ja };
+            let padded = padr(heading, iw);
+            blit(buf, dx + 1, y, &padded, iw, head_st);
+        } else {
+            const KEY_W: usize = 10;
+            let key_padded = padr(key, KEY_W);
+            let desc = if app.lang_en { desc_en } else { desc_ja };
+            let desc_w = iw.saturating_sub(KEY_W + 1);
+            blit(buf, dx + 1, y, &key_padded, KEY_W, key_st);
+            blit_ch(buf, dx + 1 + KEY_W as u16, y, ' ', Style::default());
+            blit(buf, dx + 1 + KEY_W as u16 + 1, y, &trunc(desc, desc_w), desc_w, desc_st);
+        }
+        blit_ch(buf, dx + dw as u16 - 1, y, '│', bc);
+    }
+
+    // ヒント行
+    let hint_y = dy + 1 + entries.len() as u16;
+    let hint = if app.lang_en { "  Press any key to close" } else { "  任意のキーで閉じる" };
+    blit_ch(buf, dx, hint_y, '│', bc);
+    blit(buf, dx + 1, hint_y, &padr(&trunc(hint, iw), iw), iw, dim);
+    blit_ch(buf, dx + dw as u16 - 1, hint_y, '│', bc);
+
+    // 下枠
+    let by = dy + dh as u16 - 1;
+    blit_ch(buf, dx, by, '╰', bc);
+    blit(buf, dx + 1, by, &"─".repeat(iw), iw, bc);
+    blit_ch(buf, dx + dw as u16 - 1, by, '╯', bc);
+}
+
 // ── Tree pane ──────────────────────────────────────────────────────────
 
 fn render_tree(frame: &mut Frame, area: Rect, app: &App) {
@@ -1692,6 +1834,14 @@ fn render_file_list(frame: &mut Frame, area: Rect, app: &App, lh: usize) {
     let col_w = total_w.saturating_sub(COL_GAP * (cols - 1)) / cols;
     let buf = frame.buffer_mut();
 
+    // 検索中: マッチインデックスセットを構築
+    let match_set: std::collections::HashSet<usize> = app
+        .search
+        .as_ref()
+        .map(|s| s.matches.iter().copied().collect())
+        .unwrap_or_default();
+    let search_active = app.search.is_some();
+
     for col in 0..cols {
         let col_x = area.x + (col * (col_w + COL_GAP)) as u16;
         let cw = if col + 1 == cols {
@@ -1708,10 +1858,14 @@ fn render_file_list(frame: &mut Frame, area: Rect, app: &App, lh: usize) {
             let e = &app.entries[idx];
             let is_cur = idx == app.cursor;
             let is_tagged = app.tagged.get(idx).copied().unwrap_or(false);
+            let is_match = search_active && match_set.contains(&idx);
 
             let base_style = ls_style(e, &app.ls_colors);
             let file_style = if is_cur {
                 base_style.add_modifier(Modifier::REVERSED)
+            } else if is_match {
+                // 検索マッチ: 黄緑でアンダーライン
+                Style::default().fg(Color::LightGreen).add_modifier(Modifier::UNDERLINED)
             } else if is_tagged {
                 Style::default().fg(Color::Yellow)
             } else {
