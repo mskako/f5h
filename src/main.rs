@@ -11,7 +11,7 @@ use crossterm::{
 };
 use std::{io::stdout, path::PathBuf, time::Duration};
 
-use app::{App, DialogKind, FileDialog, FuncDialog, GitDialog, GitDialogState, RemoteOp, RunDialog, SearchState};
+use app::{App, DialogKind, FileDialog, FuncDialog, GitDialog, GitDialogState, RemoteOp, RunDialog, SearchState, SortMode};
 use config::{Action, load_config, lookup_action};
 use fs_utils::{git_command_silent, git_fetch, git_merge_no_ff, git_pull, git_push, git_stash_push, git_stash_pop, open_in_program, run_command, shell_quote};
 use std::sync::mpsc;
@@ -19,6 +19,11 @@ use ui::HEADER_ROWS;
 
 fn main() -> Result<()> {
     let config = load_config();
+
+    // ターミナルタブタイトルを設定
+    print!("\x1b]0;\u{1F365} f5h\x07");
+    use std::io::Write;
+    std::io::stdout().flush().ok();
 
     enable_raw_mode()?;
     stdout().execute(EnterAlternateScreen)?;
@@ -78,6 +83,45 @@ fn main() -> Result<()> {
             // ヘルプオーバーレイ表示中は任意のキーで閉じる
             if app.show_help {
                 app.show_help = false;
+                continue;
+            }
+            // ── ソートダイアログ ──────────────────────────────────
+            if app.show_sort_dialog {
+                // opts の順番: 0=Name 1=Ext 2=Size 3=Date 4=None
+                use SortMode::*;
+                const SORT_OPTS: &[SortMode] = &[Name, Ext, Size, Date, None];
+                macro_rules! apply_sort {
+                    ($app:expr, $idx:expr) => {{
+                        let mode = SORT_OPTS[$idx];
+                        if $app.sort_mode == mode && mode != SortMode::None {
+                            $app.sort_asc = !$app.sort_asc;
+                        } else {
+                            $app.sort_mode = mode;
+                            $app.sort_asc = true;
+                        }
+                        $app.show_sort_dialog = false;
+                        $app.reload();
+                    }};
+                }
+                match (key.code, key.modifiers) {
+                    (KeyCode::Esc, _) => { app.show_sort_dialog = false; }
+                    (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                        if app.sort_cursor > 0 { app.sort_cursor -= 1; }
+                    }
+                    (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                        if app.sort_cursor + 1 < SORT_OPTS.len() { app.sort_cursor += 1; }
+                    }
+                    (KeyCode::Enter, KeyModifiers::NONE) => {
+                        let idx = app.sort_cursor;
+                        apply_sort!(app, idx);
+                    }
+                    (KeyCode::Char('n'), _) | (KeyCode::Char('N'), _) => { app.sort_cursor = 0; apply_sort!(app, 0); }
+                    (KeyCode::Char('x'), _) | (KeyCode::Char('X'), _) => { app.sort_cursor = 1; apply_sort!(app, 1); }
+                    (KeyCode::Char('s'), _) | (KeyCode::Char('S'), _) => { app.sort_cursor = 2; apply_sort!(app, 2); }
+                    (KeyCode::Char('t'), _) | (KeyCode::Char('T'), _) => { app.sort_cursor = 3; apply_sort!(app, 3); }
+                    (KeyCode::Char('u'), _) | (KeyCode::Char('U'), _) => { app.sort_cursor = 4; apply_sort!(app, 4); }
+                    _ => {}
+                }
                 continue;
             }
             if app.func_dialog.is_some() {
@@ -197,8 +241,15 @@ fn main() -> Result<()> {
                 }
                 continue;
             }
-            // ── 検索入力モード ────────────────────────────────────
-            if app.search.is_some() {
+            // ── 確定済み検索: ESC のみ受け付けてハイライトを消す ───
+            if app.search.as_ref().map(|s| s.confirmed).unwrap_or(false) {
+                if key.code == KeyCode::Esc {
+                    app.search = None;
+                }
+                // 確定済みの場合は通常キー処理へ fall-through（continue しない）
+            }
+            // ── 検索入力モード（未確定） ──────────────────────────
+            else if app.search.is_some() {
                 match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) => {
                         // キャンセル: 元の位置に戻る
@@ -207,9 +258,10 @@ fn main() -> Result<()> {
                         }
                     }
                     (KeyCode::Enter, KeyModifiers::NONE) => {
-                        // 確定: 検索バーを閉じ last_search を保存
-                        if let Some(s) = app.search.take() {
+                        // 確定: バーを閉じるが matches は維持してハイライト継続
+                        if let Some(ref mut s) = app.search {
                             app.last_search = s.input.iter().collect();
+                            s.confirmed = true;
                         }
                     }
                     (KeyCode::Left, _) => {
@@ -1188,27 +1240,47 @@ fn main() -> Result<()> {
                             origin: app.cursor,
                             matches: vec![],
                             match_idx: 0,
+                            confirmed: false,
                         });
                     }
                     Action::SearchNext => {
-                        if !app.last_search.is_empty() {
-                            let matches = app.compute_search_matches(&app.last_search.clone());
-                            if !matches.is_empty() {
-                                let next = matches.iter().position(|&i| i > app.cursor)
-                                    .unwrap_or(0);
-                                app.cursor = matches[next];
-                            }
+                        // 確定済み search があればその matches を、なければ last_search から再計算
+                        let matches: Vec<usize> =
+                            if let Some(ref s) = app.search.as_ref().filter(|s| s.confirmed) {
+                                s.matches.clone()
+                            } else if !app.last_search.is_empty() {
+                                app.compute_search_matches(&app.last_search.clone())
+                            } else { vec![] };
+                        if !matches.is_empty() {
+                            let next = matches.iter().position(|&i| i > app.cursor).unwrap_or(0);
+                            app.cursor = matches[next];
+                            if let Some(ref mut s) = app.search { s.match_idx = next; }
                         }
                     }
                     Action::SearchPrev => {
-                        if !app.last_search.is_empty() {
-                            let matches = app.compute_search_matches(&app.last_search.clone());
-                            if !matches.is_empty() {
-                                let prev = matches.iter().rposition(|&i| i < app.cursor)
-                                    .unwrap_or(matches.len() - 1);
-                                app.cursor = matches[prev];
-                            }
+                        let matches: Vec<usize> =
+                            if let Some(ref s) = app.search.as_ref().filter(|s| s.confirmed) {
+                                s.matches.clone()
+                            } else if !app.last_search.is_empty() {
+                                app.compute_search_matches(&app.last_search.clone())
+                            } else { vec![] };
+                        if !matches.is_empty() {
+                            let prev = matches.iter().rposition(|&i| i < app.cursor)
+                                .unwrap_or(matches.len() - 1);
+                            app.cursor = matches[prev];
+                            if let Some(ref mut s) = app.search { s.match_idx = prev; }
                         }
+                    }
+                    Action::Sort => {
+                        app.show_sort_dialog = true;
+                        // sort_cursor を現在の sort_mode に合わせる
+                        app.sort_cursor = match app.sort_mode {
+                            SortMode::Name => 0,
+                            SortMode::Ext  => 1,
+                            SortMode::Size => 2,
+                            SortMode::Date => 3,
+                            SortMode::None => 4,
+                        };
                     }
                     Action::Git => {
                         app.git_dialog = Some(GitDialog { state: GitDialogState::Menu });
@@ -1343,5 +1415,10 @@ fn main() -> Result<()> {
 
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
+
+    // ターミナルタブタイトルをリセット
+    print!("\x1b]0;\x07");
+    std::io::stdout().flush().ok();
+
     Ok(())
 }

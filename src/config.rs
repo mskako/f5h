@@ -218,6 +218,7 @@ pub enum Action {
     Search,
     SearchNext,
     SearchPrev,
+    Sort,
 }
 
 pub fn action_from_str(s: &str) -> Option<Action> {
@@ -256,6 +257,7 @@ pub fn action_from_str(s: &str) -> Option<Action> {
         "search" => Some(Action::Search),
         "search_next" => Some(Action::SearchNext),
         "search_prev" => Some(Action::SearchPrev),
+        "sort" => Some(Action::Sort),
         _ => None,
     }
 }
@@ -362,6 +364,7 @@ pub fn build_keymap(cfg_keys: &HashMap<String, String>) -> KeyMap {
         ("search", "/"),
         ("search_next", "n"),
         ("search_prev", "N"),
+        ("sort", "s"),
     ];
     let mut map = KeyMap::new();
     for &(action_str, key_str) in defaults {
@@ -390,8 +393,9 @@ pub static MENU_ACTIONS: &[(Action, &str, &str)] = &[
     (Action::Func, "機能", "Func"),
     (Action::Git, "Git", "Git"),
     (Action::TreeToggle, "ツリー", "Tree"),
+    (Action::Sort, "ソート", "Sort"),
     (Action::Search, "検索", "Search"),
-    (Action::HomeDir, "HOME", "Home"),
+    (Action::HomeDir, "ホーム", "Home"),
     (Action::Copy, "複写", "Copy"),
     (Action::Move, "移動", "Move"),
     (Action::Delete, "削除", "Del"),

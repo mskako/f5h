@@ -68,9 +68,10 @@ pub struct FuncDialog {
 pub struct SearchState {
     pub input: Vec<char>,
     pub cursor: usize,
-    pub origin: usize,      // 検索開始前のカーソル位置
+    pub origin: usize,       // 検索開始前のカーソル位置
     pub matches: Vec<usize>, // マッチしたエントリのインデックス
     pub match_idx: usize,    // matches の中の現在位置
+    pub confirmed: bool,     // Enter で確定済み（バーは閉じるがハイライトは維持）
 }
 
 /// push / pull / fetch のどれを実行するか
@@ -90,6 +91,15 @@ pub enum GitDialogState {
     StashMsg { input: Vec<char>, cursor: usize },
     /// SSH パスフレーズ入力（空 = SSHエージェント試行）
     Passphrase { op: RemoteOp, input: Vec<char>, cursor: usize },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SortMode {
+    None,
+    Name,
+    Ext,
+    Size,
+    Date,
 }
 
 #[derive(Clone, Debug)]
@@ -170,6 +180,10 @@ pub struct App {
     pub lang_en: bool,
     pub keymap: KeyMap,
     pub menu_items: Vec<(String, String)>,
+    pub sort_mode: SortMode,
+    pub sort_asc: bool,
+    pub show_sort_dialog: bool,
+    pub sort_cursor: usize,
     pub error_msg: Option<String>,
     pub success_msg: Option<String>,
     pub show_help: bool,
@@ -283,6 +297,10 @@ impl App {
             lang_en,
             keymap,
             menu_items,
+            sort_mode: SortMode::None,
+            sort_asc: true,
+            show_sort_dialog: false,
+            sort_cursor: 0,
             error_msg: None,
             success_msg: None,
             show_help: false,
@@ -414,8 +432,32 @@ impl App {
                 files.push(fe);
             }
         }
-        dirs.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
-        files.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        // ソートモードに従って dirs / files をそれぞれ並べ替え
+        let sort_mode = self.sort_mode;
+        let sort_asc = self.sort_asc;
+        let sort_fn = |a: &FileEntry, b: &FileEntry| -> std::cmp::Ordering {
+            let ord = match sort_mode {
+                SortMode::None | SortMode::Name => {
+                    a.name.to_lowercase().cmp(&b.name.to_lowercase())
+                }
+                SortMode::Ext => {
+                    let ea = std::path::Path::new(&a.name)
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_lowercase())
+                        .unwrap_or_default();
+                    let eb = std::path::Path::new(&b.name)
+                        .extension()
+                        .map(|e| e.to_string_lossy().to_lowercase())
+                        .unwrap_or_default();
+                    ea.cmp(&eb).then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                }
+                SortMode::Size => a.size.cmp(&b.size),
+                SortMode::Date => a.date.cmp(&b.date).then_with(|| a.time_str.cmp(&b.time_str)),
+            };
+            if sort_asc { ord } else { ord.reverse() }
+        };
+        dirs.sort_by(sort_fn);
+        files.sort_by(sort_fn);
         self.entries.extend(dirs);
         self.entries.extend(files);
         self.tagged = vec![false; self.entries.len()];
@@ -1180,6 +1222,10 @@ mod tests {
             lang_en: false,
             keymap,
             menu_items,
+            sort_mode: SortMode::None,
+            sort_asc: true,
+            show_sort_dialog: false,
+            sort_cursor: 0,
             error_msg: None,
             success_msg: None,
             show_help: false,
@@ -2083,6 +2129,160 @@ mod tests {
         } else {
             panic!("wrong variant");
         }
+    }
+
+    // ── SortMode ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_sort_dotdot_always_first() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("zzz.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("aaa")).unwrap();
+
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.sort_mode = SortMode::Name;
+        app.sort_asc = false; // 逆順でも ".." は先頭のまま
+        app.load_entries().unwrap();
+
+        assert_eq!(app.entries[0].name, "..");
+    }
+
+    #[test]
+    fn test_sort_name_ascending() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("charlie.txt"), "").unwrap();
+        std::fs::write(dir.path().join("alpha.txt"), "").unwrap();
+        std::fs::write(dir.path().join("bravo.txt"), "").unwrap();
+
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.sort_mode = SortMode::Name;
+        app.sort_asc = true;
+        app.load_entries().unwrap();
+
+        let names: Vec<&str> = app.entries.iter().skip(1).map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha.txt", "bravo.txt", "charlie.txt"]);
+    }
+
+    #[test]
+    fn test_sort_name_descending() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("charlie.txt"), "").unwrap();
+        std::fs::write(dir.path().join("alpha.txt"), "").unwrap();
+        std::fs::write(dir.path().join("bravo.txt"), "").unwrap();
+
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.sort_mode = SortMode::Name;
+        app.sort_asc = false;
+        app.load_entries().unwrap();
+
+        let names: Vec<&str> = app.entries.iter().skip(1).map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["charlie.txt", "bravo.txt", "alpha.txt"]);
+    }
+
+    #[test]
+    fn test_sort_by_extension() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("b.rs"), "").unwrap();
+        std::fs::write(dir.path().join("a.txt"), "").unwrap();
+        std::fs::write(dir.path().join("c.md"), "").unwrap();
+
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.sort_mode = SortMode::Ext;
+        app.sort_asc = true;
+        app.load_entries().unwrap();
+
+        // 拡張子順: md < rs < txt
+        let names: Vec<&str> = app.entries.iter().skip(1).map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["c.md", "b.rs", "a.txt"]);
+    }
+
+    #[test]
+    fn test_sort_by_size_ascending() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("big.txt"), "hello world foo").unwrap(); // 15 bytes
+        std::fs::write(dir.path().join("small.txt"), "hi").unwrap(); // 2 bytes
+        std::fs::write(dir.path().join("mid.txt"), "hello").unwrap(); // 5 bytes
+
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.sort_mode = SortMode::Size;
+        app.sort_asc = true;
+        app.load_entries().unwrap();
+
+        let names: Vec<&str> = app.entries.iter().skip(1).map(|e| e.name.as_str()).collect();
+        assert_eq!(names, vec!["small.txt", "mid.txt", "big.txt"]);
+    }
+
+    #[test]
+    fn test_sort_dirs_and_files_sorted_independently() {
+        // ディレクトリとファイルはそれぞれ独立してソートされる（ディレクトリが先）
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("a_file.txt"), "").unwrap();
+        std::fs::create_dir(dir.path().join("z_dir")).unwrap();
+        std::fs::create_dir(dir.path().join("a_dir")).unwrap();
+
+        let mut app = make_test_app(dir.path().to_path_buf());
+        app.sort_mode = SortMode::Name;
+        app.sort_asc = true;
+        app.load_entries().unwrap();
+
+        // ".." → a_dir → z_dir → a_file.txt
+        assert_eq!(app.entries[0].name, "..");
+        assert_eq!(app.entries[1].name, "a_dir");
+        assert_eq!(app.entries[2].name, "z_dir");
+        assert_eq!(app.entries[3].name, "a_file.txt");
+    }
+
+    // ── SearchState ───────────────────────────────────────────────────
+
+    #[test]
+    fn test_search_state_initial_not_confirmed() {
+        let state = SearchState {
+            input: vec!['a'],
+            cursor: 1,
+            matches: vec![0],
+            match_idx: 0,
+            origin: 0,
+            confirmed: false,
+        };
+        assert!(!state.confirmed);
+    }
+
+    #[test]
+    fn test_search_state_confirmed_flag() {
+        let mut state = SearchState {
+            input: vec!['a'],
+            cursor: 1,
+            matches: vec![0],
+            match_idx: 0,
+            origin: 0,
+            confirmed: false,
+        };
+        state.confirmed = true;
+        assert!(state.confirmed);
+    }
+
+    // ── success_msg / show_help initial state ─────────────────────────
+
+    #[test]
+    fn test_success_msg_none_by_default() {
+        let dir = tempdir().unwrap();
+        let app = make_test_app(dir.path().to_path_buf());
+        assert!(app.success_msg.is_none());
+    }
+
+    #[test]
+    fn test_show_help_false_by_default() {
+        let dir = tempdir().unwrap();
+        let app = make_test_app(dir.path().to_path_buf());
+        assert!(!app.show_help);
+    }
+
+    #[test]
+    fn test_sort_mode_none_by_default() {
+        let dir = tempdir().unwrap();
+        let app = make_test_app(dir.path().to_path_buf());
+        assert_eq!(app.sort_mode, SortMode::None);
+        assert!(app.sort_asc);
     }
 
     #[test]

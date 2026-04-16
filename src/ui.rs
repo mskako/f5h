@@ -1,7 +1,7 @@
 use ratatui::{prelude::*, widgets::Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::app::{App, DialogKind, FileEntry, FuncDialog, GitDialogState, RemoteOp, FUNC_CMDS};
+use crate::app::{App, DialogKind, FileEntry, FuncDialog, GitDialogState, RemoteOp, SortMode, FUNC_CMDS};
 use crate::fs_utils::now_str;
 
 // ── Layout constants ───────────────────────────────────────────────────
@@ -231,15 +231,22 @@ pub fn ui(frame: &mut Frame, app: &App) {
     let by = my + mh - 1;
     let page = app.current_page(lh) + 1;
     let total = app.total_pages(lh);
+    let sort_indicator = match app.sort_mode {
+        SortMode::None => String::new(),
+        SortMode::Name => format!(" [N{}]", if app.sort_asc { "▲" } else { "▼" }),
+        SortMode::Ext  => format!(" [X{}]", if app.sort_asc { "▲" } else { "▼" }),
+        SortMode::Size => format!(" [S{}]", if app.sort_asc { "▲" } else { "▼" }),
+        SortMode::Date => format!(" [T{}]", if app.sort_asc { "▲" } else { "▼" }),
+    };
     let status_text = format!(
-        "{}  {:>3}/{:<3} {}",
-        app.labels.f1_help, page, total, app.labels.page_unit
+        "{}{}  {:>3}/{:<3} {}",
+        app.labels.f1_help, sort_indicator, page, total, app.labels.page_unit
     );
     let st_w = sw(&status_text);
     let rev = Style::default().add_modifier(Modifier::REVERSED);
     blit_ch(buf, mx, by, '╰', cyan);
-    if let Some(ref s) = app.search {
-        // 検索バーを底辺ボーダーに埋め込む
+    if let Some(ref s) = app.search.as_ref().filter(|s| !s.confirmed) {
+        // 検索バーを底辺ボーダーに埋め込む（入力中のみ）
         let search_prefix = "/ ";
         let prefix_w = sw(search_prefix);
         let search_avail = (mw - 2).saturating_sub(st_w + 1);
@@ -273,6 +280,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
     render_git_dialog(frame, app);
     render_git_running(frame, app);
     render_file_dialog(frame, app);
+    render_sort_dialog(frame, app);
     render_error_msg(frame, app);
     render_success_msg(frame, app);
     render_help_overlay(frame, app);
@@ -1634,6 +1642,92 @@ fn render_error_msg(frame: &mut Frame, app: &App) {
     blit_ch(buf, dx, by, '╰', red);
     blit(buf, dx + 1, by, &"─".repeat(iw), iw, red);
     blit_ch(buf, dx + dw as u16 - 1, by, '╯', red);
+}
+
+// ── Sort dialog ───────────────────────────────────────────────────────
+
+fn render_sort_dialog(frame: &mut Frame, app: &App) {
+    if !app.show_sort_dialog {
+        return;
+    }
+    let area = frame.area();
+
+    // オプション定義: (key, label_ja, label_en, mode)  ← ls オプション準拠
+    let opts: &[(&str, &str, &str, SortMode)] = &[
+        ("N", "名前", "Name", SortMode::Name),
+        ("X", "拡張子", "Ext", SortMode::Ext),
+        ("S", "サイズ", "Size", SortMode::Size),
+        ("T", "日付", "Date", SortMode::Date),
+        ("U", "なし", "None", SortMode::None),
+    ];
+
+    // ダイアログサイズ: タイトル幅に合わせて最低幅を確保
+    let title = if app.lang_en { " Sort " } else { " ファイルのソート " };
+    let title_w = sw(title);
+    // 各オプション行 "  X:拡張子  " の最大表示幅
+    let max_opt_w = opts.iter().map(|&(k, lj, le, _)| {
+        let lbl = if app.lang_en { le } else { lj };
+        sw(&format!("  {}:{}", k, lbl)) + 4 // 矢印分 ▲▼ = 2 + 余白
+    }).max().unwrap_or(20);
+    let dw: usize = (title_w + 2).max(max_opt_w + 2).max(20);
+    let iw = dw - 2;
+    let dh: usize = opts.len() + 3;
+    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+    let dy = ((area.height as usize).saturating_sub(dh) / 2) as u16;
+
+    let buf = frame.buffer_mut();
+    let bc = app.ui_colors.border;
+    let title_st = app.ui_colors.title;
+    let key_st = Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let txt_st = Style::default().fg(Color::White);
+    let active_st = Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED);
+    let dim = Style::default().fg(Color::DarkGray);
+
+    clear_rect(buf, dx, dy, dw, dh);
+
+    // 上枠
+    let fill_n = iw.saturating_sub(title_w);
+    blit_ch(buf, dx, dy, '╭', bc);
+    blit(buf, dx + 1, dy, title, title_w, title_st);
+    blit(buf, dx + 1 + title_w as u16, dy, &"─".repeat(fill_n), fill_n, bc);
+    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', bc);
+
+    for (i, &(key, label_ja, label_en, mode)) in opts.iter().enumerate() {
+        let y = dy + 1 + i as u16;
+        blit_ch(buf, dx, y, '│', bc);
+        let label = if app.lang_en { label_en } else { label_ja };
+        let is_cursor = i == app.sort_cursor;
+        let is_applied = app.sort_mode == mode && mode != SortMode::None;
+        // 現在のソートモードには ▲/▼ を表示
+        let arrow = if is_applied {
+            if app.sort_asc { " ▲" } else { " ▼" }
+        } else {
+            "  "
+        };
+        let line = format!("  {}:{}{}", key, label, arrow);
+        let padded = padr(&line, iw);
+        // カーソル行を REVERSED でハイライト
+        let line_st = if is_cursor { active_st } else { txt_st };
+        blit(buf, dx + 1, y, &padded, iw, line_st);
+        // カーソル行でない場合はキー文字をシアン太字で上書き
+        if !is_cursor {
+            blit_ch(buf, dx + 3, y, key.chars().next().unwrap_or(' '), key_st);
+        }
+        blit_ch(buf, dx + dw as u16 - 1, y, '│', bc);
+    }
+
+    // ESC行
+    let esc_y = dy + 1 + opts.len() as u16;
+    blit_ch(buf, dx, esc_y, '│', bc);
+    let esc_label = if app.lang_en { "  ESC:Cancel" } else { "  ESC:中断" };
+    blit(buf, dx + 1, esc_y, &padr(esc_label, iw), iw, dim);
+    blit_ch(buf, dx + dw as u16 - 1, esc_y, '│', bc);
+
+    // 下枠
+    let by = dy + dh as u16 - 1;
+    blit_ch(buf, dx, by, '╰', bc);
+    blit(buf, dx + 1, by, &"─".repeat(iw), iw, bc);
+    blit_ch(buf, dx + dw as u16 - 1, by, '╯', bc);
 }
 
 // ── Success dialog ────────────────────────────────────────────────────
