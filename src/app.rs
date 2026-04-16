@@ -63,6 +63,14 @@ pub struct FuncDialog {
     pub selected: usize,  // フィルタリスト内の選択位置
 }
 
+/// ディレクトリジャンプダイアログの状態
+#[derive(Clone, Debug, Default)]
+pub struct DirJumpDialog {
+    pub input: Vec<char>,
+    pub cursor: usize,
+    pub error: Option<String>,
+}
+
 /// ファイル名検索の状態
 #[derive(Clone, Debug)]
 pub struct SearchState {
@@ -131,6 +139,7 @@ pub struct OverwritePrompt {
     pub todo: Vec<String>, // remaining files after conflict
     pub is_move: bool,
     pub batch: Option<ConflictChoice>, // set by Shift+: apply to all remaining
+    pub cursor: usize,     // 0=U 1=O 2=C 3=N (j/k/Enter で選択)
 }
 
 pub struct FileDialog {
@@ -184,11 +193,13 @@ pub struct App {
     pub sort_asc: bool,
     pub show_sort_dialog: bool,
     pub sort_cursor: usize,
+    pub git_menu_cursor: usize, // Git メニュー内のカーソル位置 (0-9)
     pub error_msg: Option<String>,
     pub success_msg: Option<String>,
     pub show_help: bool,
     pub run_dialog: Option<RunDialog>,
     pub func_dialog: Option<FuncDialog>,
+    pub dir_jump_dialog: Option<DirJumpDialog>,
     pub search: Option<SearchState>,
     pub last_search: String,
     pub git_dialog: Option<GitDialog>,
@@ -301,11 +312,13 @@ impl App {
             sort_asc: true,
             show_sort_dialog: false,
             sort_cursor: 0,
+            git_menu_cursor: 0,
             error_msg: None,
             success_msg: None,
             show_help: false,
             run_dialog: None,
             func_dialog: None,
+            dir_jump_dialog: None,
             search: None,
             last_search: String::new(),
             git_dialog: None,
@@ -521,6 +534,24 @@ impl App {
                     return Err(e);
                 }
             }
+        }
+        self.update_file_info();
+        Ok(())
+    }
+
+    /// 絶対パスで直接ディレクトリに移動する（ディレクトリジャンプ用）。
+    pub fn enter_dir_abs(&mut self, path: &std::path::Path) -> Result<()> {
+        let canonical = path.canonicalize()
+            .map_err(|e| anyhow::anyhow!("{}: {}", path.display(), e))?;
+        if !canonical.is_dir() {
+            return Err(anyhow::anyhow!("ディレクトリではありません: {}", canonical.display()));
+        }
+        let prev = self.current_dir.clone();
+        self.current_dir = canonical;
+        self.cursor = 0;
+        if let Err(e) = self.load_entries() {
+            self.current_dir = prev;
+            return Err(e);
         }
         self.update_file_info();
         Ok(())
@@ -896,6 +927,7 @@ impl App {
                             todo: files[i + 1..].to_vec(),
                             is_move,
                             batch: None,
+                            cursor: 0,
                         }));
                     }
                     Some(ConflictChoice::Overwrite) => {
@@ -1226,11 +1258,13 @@ mod tests {
             sort_asc: true,
             show_sort_dialog: false,
             sort_cursor: 0,
+            git_menu_cursor: 0,
             error_msg: None,
             success_msg: None,
             show_help: false,
             run_dialog: None,
             func_dialog: None,
+            dir_jump_dialog: None,
             search: None,
             last_search: String::new(),
             git_dialog: None,
@@ -1778,6 +1812,7 @@ mod tests {
             todo,
             is_move,
             batch: None,
+            cursor: 0,
         }
     }
 

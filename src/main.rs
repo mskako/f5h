@@ -11,7 +11,7 @@ use crossterm::{
 };
 use std::{io::stdout, path::PathBuf, time::Duration};
 
-use app::{App, DialogKind, FileDialog, FuncDialog, GitDialog, GitDialogState, RemoteOp, RunDialog, SearchState, SortMode};
+use app::{App, DialogKind, DirJumpDialog, FileDialog, FuncDialog, GitDialog, GitDialogState, RemoteOp, RunDialog, SearchState, SortMode};
 use config::{Action, load_config, lookup_action};
 use fs_utils::{git_command_silent, git_fetch, git_merge_no_ff, git_pull, git_push, git_stash_push, git_stash_pop, open_in_program, run_command, shell_quote};
 use std::sync::mpsc;
@@ -320,8 +320,105 @@ fn main() -> Result<()> {
                 let state = app.git_dialog.as_ref().map(|d| d.state.clone());
                 match state {
                     Some(GitDialogState::Menu) => {
+                        // Git メニュー項目数
+                        const GIT_MENU_LEN: usize = 10;
                         match (key.code, key.modifiers) {
                             (KeyCode::Esc, _) => app.git_dialog = None,
+                            (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                                if app.git_menu_cursor > 0 { app.git_menu_cursor -= 1; }
+                            }
+                            (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                                if app.git_menu_cursor + 1 < GIT_MENU_LEN { app.git_menu_cursor += 1; }
+                            }
+                            (KeyCode::Enter, KeyModifiers::NONE) => {
+                                // カーソル位置に対応するキーを合成して再ディスパッチ
+                                let synthetic: Option<char> = match app.git_menu_cursor {
+                                    0 => Some('a'), 1 => Some('A'), 2 => Some('c'),
+                                    3 => Some('f'), 4 => Some('p'), 5 => Some('P'),
+                                    6 => Some('m'), 7 => Some('s'), 8 => Some('t'),
+                                    9 => Some('T'), _ => None,
+                                };
+                                if let Some(ch) = synthetic {
+                                    use crossterm::event::{KeyEvent, KeyEventState};
+                                    let fake = KeyEvent {
+                                        code: KeyCode::Char(ch),
+                                        modifiers: if ch.is_uppercase() {
+                                            KeyModifiers::SHIFT
+                                        } else {
+                                            KeyModifiers::NONE
+                                        },
+                                        kind: KeyEventKind::Press,
+                                        state: KeyEventState::NONE,
+                                    };
+                                    // 次フレームで処理するため状態を git_dialog のまま保持しつつ
+                                    // 直接対応するキーハンドラーへジャンプできないため、
+                                    // git_dialog を None にしてから対応アクションを直接実行する
+                                    // — ここでは同じキーハンドラーブロックへ再入せず
+                                    //   代わりに各アクションの先頭コードを直接呼ぶ
+                                    let _ = fake; // 未使用警告抑制
+                                    // 各アクションを直接実行（Enterキー押下時の dispatch）
+                                    match app.git_menu_cursor {
+                                        0 => {
+                                            // git add: cursor/tagged
+                                            let targets: Vec<String> = {
+                                                let tagged: Vec<String> = app.entries.iter()
+                                                    .zip(app.tagged.iter())
+                                                    .filter(|(_, t)| **t)
+                                                    .map(|(e, _)| e.name.clone())
+                                                    .collect();
+                                                if !tagged.is_empty() { tagged }
+                                                else {
+                                                    app.entries.get(app.cursor)
+                                                        .filter(|e| e.name != "..")
+                                                        .map(|e| vec![e.name.clone()])
+                                                        .unwrap_or_default()
+                                                }
+                                            };
+                                            app.git_dialog = None;
+                                            if targets.is_empty() {
+                                                app.error_msg = Some("対象ファイルがありません".to_string());
+                                            } else {
+                                                let args: Vec<&str> = std::iter::once("add")
+                                                    .chain(targets.iter().map(|s| s.as_str()))
+                                                    .collect();
+                                                match git_command_silent(&args, &app.current_dir) {
+                                                    Ok(()) => { app.reload(); app.success_msg = Some(format!("{} 件をステージしました。", targets.len())); }
+                                                    Err(e) => app.error_msg = Some(e.to_string()),
+                                                }
+                                            }
+                                        }
+                                        1 => {
+                                            // git add all
+                                            app.git_dialog = None;
+                                            match git_command_silent(&["add", "."], &app.current_dir) {
+                                                Ok(()) => { app.reload(); app.success_msg = Some("全変更をステージしました。".to_string()); }
+                                                Err(e) => app.error_msg = Some(e.to_string()),
+                                            }
+                                        }
+                                        2 => { app.git_dialog = Some(GitDialog { state: GitDialogState::CommitMsg { input: vec![], cursor: 0 } }); }
+                                        3 => { app.git_dialog = Some(GitDialog { state: GitDialogState::Passphrase { op: RemoteOp::Fetch, input: vec![], cursor: 0 } }); }
+                                        4 => { app.git_dialog = Some(GitDialog { state: GitDialogState::Passphrase { op: RemoteOp::Push, input: vec![], cursor: 0 } }); }
+                                        5 => { app.git_dialog = Some(GitDialog { state: GitDialogState::Passphrase { op: RemoteOp::Pull, input: vec![], cursor: 0 } }); }
+                                        6 => {
+                                            app.git_dialog = None;
+                                            match git_merge_no_ff(&app.current_dir) {
+                                                Ok(()) => { app.reload(); app.success_msg = Some("マージが完了しました。".to_string()); }
+                                                Err(e) => app.error_msg = Some(e.to_string()),
+                                            }
+                                        }
+                                        7 => { app.git_dialog = Some(GitDialog { state: GitDialogState::SwitchBranch { input: vec![], cursor: 0 } }); }
+                                        8 => { app.git_dialog = Some(GitDialog { state: GitDialogState::StashMsg { input: vec![], cursor: 0 } }); }
+                                        9 => {
+                                            app.git_dialog = None;
+                                            match git_stash_pop(&app.current_dir) {
+                                                Ok(()) => { app.reload(); app.success_msg = Some("スタッシュを取り出しました。".to_string()); }
+                                                Err(e) => app.error_msg = Some(e.to_string()),
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
                             (KeyCode::Char('a'), KeyModifiers::NONE) => {
                                 // git add: tagged files or cursor file
                                 let targets: Vec<String> = {
@@ -722,6 +819,72 @@ fn main() -> Result<()> {
                 }
                 continue;
             }
+            if app.dir_jump_dialog.is_some() {
+                // ── Dir jump dialog ───────────────────────────────
+                match (key.code, key.modifiers) {
+                    (KeyCode::Esc, _) => { app.dir_jump_dialog = None; }
+                    (KeyCode::Enter, KeyModifiers::NONE) => {
+                        if let Some(ref dlg) = app.dir_jump_dialog {
+                            let input: String = dlg.input.iter().collect();
+                            let expanded = if input.starts_with('~') {
+                                if let Ok(home) = std::env::var("HOME") {
+                                    input.replacen('~', &home, 1)
+                                } else { input.clone() }
+                            } else { input.clone() };
+                            let path = std::path::PathBuf::from(&expanded);
+                            let _ = dlg;
+                            match app.enter_dir_abs(&path) {
+                                Ok(()) => { app.dir_jump_dialog = None; }
+                                Err(e) => {
+                                    if let Some(ref mut d) = app.dir_jump_dialog {
+                                        d.error = Some(e.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    (KeyCode::Left, _) => {
+                        if let Some(ref mut d) = app.dir_jump_dialog {
+                            if d.cursor > 0 { d.cursor -= 1; }
+                        }
+                    }
+                    (KeyCode::Right, _) => {
+                        if let Some(ref mut d) = app.dir_jump_dialog {
+                            if d.cursor < d.input.len() { d.cursor += 1; }
+                        }
+                    }
+                    (KeyCode::Home, _) => {
+                        if let Some(ref mut d) = app.dir_jump_dialog { d.cursor = 0; }
+                    }
+                    (KeyCode::End, _) => {
+                        if let Some(ref mut d) = app.dir_jump_dialog {
+                            d.cursor = d.input.len();
+                        }
+                    }
+                    (KeyCode::Backspace, _) => {
+                        if let Some(ref mut d) = app.dir_jump_dialog {
+                            if d.cursor > 0 { d.cursor -= 1; d.input.remove(d.cursor); }
+                            d.error = None;
+                        }
+                    }
+                    (KeyCode::Delete, _) => {
+                        if let Some(ref mut d) = app.dir_jump_dialog {
+                            if d.cursor < d.input.len() { d.input.remove(d.cursor); }
+                            d.error = None;
+                        }
+                    }
+                    (KeyCode::Char(c), KeyModifiers::NONE)
+                    | (KeyCode::Char(c), KeyModifiers::SHIFT) => {
+                        if let Some(ref mut d) = app.dir_jump_dialog {
+                            d.input.insert(d.cursor, c);
+                            d.cursor += 1;
+                            d.error = None;
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if app.run_dialog.is_some() {
                 // ── Run dialog input ──────────────────────────────
                 match (key.code, key.modifiers) {
@@ -895,14 +1058,46 @@ fn main() -> Result<()> {
                                     }
                                 }};
                             }
-                            match key.code {
-                                KeyCode::Char('u') => apply_resume!(resume_if_newer),
-                                KeyCode::Char('U') => apply_resume!(resume_if_newer_batch),
-                                KeyCode::Char('o') => apply_resume!(resume_overwrite),
-                                KeyCode::Char('O') => apply_resume!(resume_overwrite_batch),
-                                KeyCode::Char('n') => apply_resume!(resume_skip),
-                                KeyCode::Char('N') => apply_resume!(resume_skip_batch),
-                                KeyCode::Char('c') | KeyCode::Char('C') => {
+                            match (key.code, key.modifiers) {
+                                (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                                    if let Some(ref mut p) = dlg.overwrite {
+                                        if p.cursor > 0 { p.cursor -= 1; }
+                                    }
+                                    app.file_dialog = Some(dlg);
+                                }
+                                (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                                    if let Some(ref mut p) = dlg.overwrite {
+                                        if p.cursor < 3 { p.cursor += 1; }
+                                    }
+                                    app.file_dialog = Some(dlg);
+                                }
+                                (KeyCode::Enter, KeyModifiers::NONE) => {
+                                    let cur = dlg.overwrite.as_ref().map(|p| p.cursor).unwrap_or(0);
+                                    match cur {
+                                        0 => apply_resume!(resume_if_newer),
+                                        1 => apply_resume!(resume_overwrite),
+                                        2 => {
+                                            // C と同じ: 名前変更サブダイアログを開く
+                                            let fname: Vec<char> = dlg.overwrite.as_ref()
+                                                .map(|p| p.conflict.chars().collect())
+                                                .unwrap_or_default();
+                                            let flen = fname.len();
+                                            dlg.input = fname;
+                                            dlg.cursor = flen;
+                                            dlg.conflict_rename = true;
+                                            dlg.error = None;
+                                            app.file_dialog = Some(dlg);
+                                        }
+                                        _ => apply_resume!(resume_skip),
+                                    }
+                                }
+                                (KeyCode::Char('u'), _) => apply_resume!(resume_if_newer),
+                                (KeyCode::Char('U'), _) => apply_resume!(resume_if_newer_batch),
+                                (KeyCode::Char('o'), _) => apply_resume!(resume_overwrite),
+                                (KeyCode::Char('O'), _) => apply_resume!(resume_overwrite_batch),
+                                (KeyCode::Char('n'), _) => apply_resume!(resume_skip),
+                                (KeyCode::Char('N'), _) => apply_resume!(resume_skip_batch),
+                                (KeyCode::Char('c'), _) | (KeyCode::Char('C'), _) => {
                                     // 名前変更サブダイアログを開く
                                     // 入力欄を競合ファイル名で初期化
                                     let fname: Vec<char> = dlg
@@ -917,7 +1112,7 @@ fn main() -> Result<()> {
                                     dlg.error = None;
                                     app.file_dialog = Some(dlg);
                                 }
-                                KeyCode::Esc => {
+                                (KeyCode::Esc, _) => {
                                     // 中断: ダイアログを閉じてリロード
                                     app.reload();
                                     terminal.clear()?;
@@ -929,28 +1124,50 @@ fn main() -> Result<()> {
                         }
                     } else {
                         match dlg.kind {
-                            DialogKind::DeleteConfirm => match key.code {
-                                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                                    let targets = dlg.targets.clone();
-                                    match app.exec_delete(&targets) {
-                                        Ok(()) => {
-                                            app.reload();
-                                            if app.cursor >= app.entries.len() {
-                                                app.cursor = app.entries.len().saturating_sub(1);
+                            DialogKind::DeleteConfirm => {
+                                // cursor: 0=No(デフォルト) 1=Yes
+                                macro_rules! do_delete {
+                                    () => {{
+                                        let targets = dlg.targets.clone();
+                                        match app.exec_delete(&targets) {
+                                            Ok(()) => {
+                                                app.reload();
+                                                if app.cursor >= app.entries.len() {
+                                                    app.cursor = app.entries.len().saturating_sub(1);
+                                                }
+                                                terminal.clear()?;
                                             }
-                                            terminal.clear()?;
+                                            Err(e) => {
+                                                dlg.error = Some(e.to_string());
+                                                app.file_dialog = Some(dlg);
+                                            }
                                         }
-                                        Err(e) => {
-                                            dlg.error = Some(e.to_string());
-                                            app.file_dialog = Some(dlg);
-                                        }
+                                    }};
+                                }
+                                match (key.code, key.modifiers) {
+                                    // h/← → 左ボタン(Y:はい) = cursor 1
+                                    (KeyCode::Left, _) | (KeyCode::Char('h'), _)
+                                    | (KeyCode::Up, _) | (KeyCode::Char('k'), _) => {
+                                        dlg.cursor = 1;
+                                        app.file_dialog = Some(dlg);
                                     }
+                                    // l/→ → 右ボタン(N:いいえ) = cursor 0
+                                    (KeyCode::Right, _) | (KeyCode::Char('l'), _)
+                                    | (KeyCode::Down, _) | (KeyCode::Char('j'), _) => {
+                                        dlg.cursor = 0;
+                                        app.file_dialog = Some(dlg);
+                                    }
+                                    (KeyCode::Enter, KeyModifiers::NONE) => {
+                                        if dlg.cursor == 1 { do_delete!(); }
+                                        // cursor==0 は何もしない（ダイアログを閉じる）
+                                    }
+                                    (KeyCode::Char('y'), _) | (KeyCode::Char('Y'), _) => {
+                                        do_delete!();
+                                    }
+                                    (KeyCode::Esc, _) | (KeyCode::Char('n'), _) | (KeyCode::Char('N'), _) => {}
+                                    _ => { app.file_dialog = Some(dlg); }
                                 }
-                                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {}
-                                _ => {
-                                    app.file_dialog = Some(dlg);
-                                }
-                            },
+                            }
                             _ => {
                                 // Input-based dialogs (Rename/Copy/Move/Mkdir/Attr/CopyNewName)
                                 match (key.code, key.modifiers) {
@@ -1397,7 +1614,16 @@ fn main() -> Result<()> {
                             });
                         }
                     }
-                    Action::DirJump => { /* TODO */ }
+                    Action::DirJump => {
+                        // カレントディレクトリを初期値として入力欄に入れる
+                        let init: Vec<char> = app.current_dir.to_string_lossy().chars().collect();
+                        let len = init.len();
+                        app.dir_jump_dialog = Some(DirJumpDialog {
+                            input: init,
+                            cursor: len,
+                            error: None,
+                        });
+                    }
                     Action::TreeToggle => {
                         if app.tree_open {
                             app.tree_open = false;

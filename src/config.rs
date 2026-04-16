@@ -396,6 +396,7 @@ pub static MENU_ACTIONS: &[(Action, &str, &str)] = &[
     (Action::Sort, "ソート", "Sort"),
     (Action::Search, "検索", "Search"),
     (Action::HomeDir, "ホーム", "Home"),
+    (Action::DirJump, "ジャンプ", "Jump"),
     (Action::Copy, "複写", "Copy"),
     (Action::Move, "移動", "Move"),
     (Action::Delete, "削除", "Del"),

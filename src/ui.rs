@@ -275,6 +275,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
     }
     blit_ch(buf, mx + mw as u16 - 1, by, '╯', cyan);
 
+    render_dir_jump_dialog(frame, app);
     render_run_dialog(frame, app);
     render_func_dialog(frame, app);
     render_git_dialog(frame, app);
@@ -653,6 +654,75 @@ fn render_header(frame: &mut Frame, main_area: Rect, inner: Rect, app: &App) {
     }
 }
 
+// ── Dir jump dialog ─────────────────────────────────────────────────────
+
+fn render_dir_jump_dialog(frame: &mut Frame, app: &App) {
+    let dlg = match app.dir_jump_dialog.as_ref() {
+        Some(d) => d,
+        None => return,
+    };
+    let area = frame.area();
+    let dw = (area.width as usize).clamp(50, 80);
+    let iw = dw - 2;
+    let dh = 4usize; // 上枠 + 入力行 + エラー行 + 下枠
+    let dx = ((area.width as usize).saturating_sub(dw) / 2) as u16;
+    let dy = ((area.height as usize).saturating_sub(dh) / 2) as u16;
+
+    let buf = frame.buffer_mut();
+    let cyan = app.ui_colors.border;
+    let yellow = app.ui_colors.title;
+    let white = Style::default().fg(Color::White);
+    let red = Style::default().fg(Color::Red);
+    let dim = Style::default().fg(Color::DarkGray);
+    let rev = Style::default().add_modifier(Modifier::REVERSED);
+
+    let title = if app.lang_en { " Jump to directory " } else { " ディレクトリへジャンプ " };
+    let hint = if app.lang_en { "  Enter:Jump  Esc:Cancel" } else { "  Enter:移動  Esc:キャンセル" };
+    let label = if app.lang_en { "Dir: " } else { "移動先: " };
+    let pw = sw(label);
+
+    clear_rect(buf, dx, dy, dw, dh);
+
+    // 上枠
+    let title_w = sw(title);
+    let fill_n = iw.saturating_sub(title_w);
+    blit_ch(buf, dx, dy, '╭', cyan);
+    blit(buf, dx + 1, dy, title, title_w, yellow);
+    blit(buf, dx + 1 + title_w as u16, dy, &"─".repeat(fill_n), fill_n, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
+
+    // 入力行
+    blit_ch(buf, dx, dy + 1, '│', cyan);
+    let input_avail = iw.saturating_sub(pw).max(1);
+    blit(buf, dx + 1, dy + 1, label, pw.min(iw), yellow);
+    let input_x = dx + 1 + pw.min(iw) as u16;
+    let scroll = if dlg.cursor >= input_avail { dlg.cursor + 1 - input_avail } else { 0 };
+    blit(buf, input_x, dy + 1, &" ".repeat(input_avail), input_avail, white);
+    for (i, &ch) in dlg.input[scroll..].iter().enumerate() {
+        if i >= input_avail { break; }
+        let st = if scroll + i == dlg.cursor { rev } else { white };
+        blit_ch(buf, input_x + i as u16, dy + 1, ch, st);
+    }
+    if dlg.cursor == dlg.input.len() && dlg.cursor - scroll < input_avail {
+        blit_ch(buf, input_x + (dlg.cursor - scroll) as u16, dy + 1, ' ', rev);
+    }
+    blit_ch(buf, dx + dw as u16 - 1, dy + 1, '│', cyan);
+
+    // エラー / ヒント行
+    blit_ch(buf, dx, dy + 2, '│', cyan);
+    if let Some(ref err) = dlg.error {
+        blit(buf, dx + 1, dy + 2, &padr(&trunc(err, iw), iw), iw, red);
+    } else {
+        blit(buf, dx + 1, dy + 2, &padr(hint, iw), iw, dim);
+    }
+    blit_ch(buf, dx + dw as u16 - 1, dy + 2, '│', cyan);
+
+    // 下枠
+    blit_ch(buf, dx, dy + 3, '╰', cyan);
+    blit(buf, dx + 1, dy + 3, &"─".repeat(iw), iw, cyan);
+    blit_ch(buf, dx + dw as u16 - 1, dy + 3, '╯', cyan);
+}
+
 // ── Run dialog ─────────────────────────────────────────────────────────
 
 fn render_run_dialog(frame: &mut Frame, app: &App) {
@@ -911,14 +981,23 @@ fn render_git_dialog(frame: &mut Frame, app: &App) {
             blit(buf, dx + 1 + sw(title) as u16, dy, &"─".repeat(iw.saturating_sub(sw(title))), iw.saturating_sub(sw(title)), cyan);
             blit_ch(buf, dx + dw as u16 - 1, dy, '╮', cyan);
 
+            let sel = app.git_menu_cursor;
+            let cursor_st = Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED);
             for (i, (key, cmd, desc)) in rows.iter().enumerate() {
                 let y = dy + 1 + i as u16;
                 blit_ch(buf, dx, y, '│', cyan);
-                blit(buf, dx + 1, y, key, 1, green);
-                blit(buf, dx + 2, y, "  ", 2, white);
-                let cmd_w = 9;
-                blit(buf, dx + 4, y, &padr(cmd, cmd_w), cmd_w, white);
-                blit(buf, dx + 4 + cmd_w as u16, y, &trunc(desc, iw - 4 - cmd_w), iw - 4 - cmd_w, dim);
+                let is_sel = i == sel;
+                if is_sel {
+                    // 行全体を REVERSED でハイライト
+                    let line = format!(" {}  {}  {}", key, padr(cmd, 9), trunc(desc, iw - 14));
+                    blit(buf, dx + 1, y, &padr(&line, iw), iw, cursor_st);
+                } else {
+                    blit(buf, dx + 1, y, key, 1, green);
+                    blit(buf, dx + 2, y, "  ", 2, white);
+                    let cmd_w = 9;
+                    blit(buf, dx + 4, y, &padr(cmd, cmd_w), cmd_w, white);
+                    blit(buf, dx + 4 + cmd_w as u16, y, &trunc(desc, iw - 4 - cmd_w), iw - 4 - cmd_w, dim);
+                }
                 blit_ch(buf, dx + dw as u16 - 1, y, '│', cyan);
             }
 
@@ -1290,42 +1369,31 @@ fn render_file_dialog(frame: &mut Frame, app: &App) {
             );
             blit_ch(buf, dx + dw as u16 - 1, dy + 2, '│', cyan);
 
-            // rows 3–6: options
-            for (row, label) in [(3u16, lu), (4, lo), (5, lc), (6, ln)] {
+            // rows 3–6: options (cursor でハイライト)
+            let sel = prompt.cursor; // 0=U 1=O 2=C 3=N
+            for (idx, (row, label)) in [(3u16, lu), (4, lo), (5, lc), (6, ln)].iter().enumerate() {
                 blit_ch(buf, dx, dy + row, '│', cyan);
+                let st = if idx == sel { Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED) } else { white };
                 blit(
                     buf,
                     dx + 2,
                     dy + row,
                     &padr(&trunc(label, iw - 1), iw - 1),
                     iw - 1,
-                    white,
+                    st,
                 );
                 blit_ch(buf, dx + dw as u16 - 1, dy + row, '│', cyan);
             }
 
-            // row 6: N + ESC on same row
+            // row 6: N + ESC on same row (N はすでに上のループで描画済み; ESC を追記)
             blit_ch(buf, dx, dy + 6, '│', cyan);
             let ln_w = sw(ln);
             let esc_w = sw(lesc);
             let gap = iw.saturating_sub(ln_w + esc_w + 2);
-            blit(buf, dx + 2, dy + 6, ln, ln_w, white);
-            blit(
-                buf,
-                dx + 2 + ln_w as u16,
-                dy + 6,
-                &" ".repeat(gap + 2),
-                gap + 2,
-                white,
-            );
-            blit(
-                buf,
-                dx + 2 + ln_w as u16 + (gap + 2) as u16,
-                dy + 6,
-                lesc,
-                esc_w,
-                dim,
-            );
+            let n_st = if sel == 3 { Style::default().fg(Color::Yellow).add_modifier(Modifier::REVERSED) } else { white };
+            blit(buf, dx + 2, dy + 6, ln, ln_w, n_st);
+            blit(buf, dx + 2 + ln_w as u16, dy + 6, &" ".repeat(gap + 2), gap + 2, white);
+            blit(buf, dx + 2 + ln_w as u16 + (gap + 2) as u16, dy + 6, lesc, esc_w, dim);
             blit_ch(buf, dx + dw as u16 - 1, dy + 6, '│', cyan);
 
             // bottom border with SHIFT+ hint
@@ -1559,19 +1627,16 @@ fn render_file_dialog(frame: &mut Frame, app: &App) {
     // Hint row
     blit_ch(buf, dx, dy + 3, '│', cyan);
     if dlg.kind == DialogKind::DeleteConfirm {
-        // ボタン形式: Y:はい (通常) / N:いいえ (ハイライト = 安全側デフォルト)
+        // cursor==1 → Yes が選択、cursor==0(デフォルト) → No が選択
         let y_btn = if app.lang_en { "  Y:Yes" } else { "  Y:はい" };
-        let n_btn = if app.lang_en {
-            "  N:No  "
-        } else {
-            "  N:いいえ  "
-        };
+        let n_btn = if app.lang_en { "  N:No  " } else { "  N:いいえ  " };
         let yw = sw(y_btn);
         let nw = sw(n_btn);
         let pad = iw.saturating_sub(yw + nw);
-        blit(buf, dx + 1, dy + 3, y_btn, yw, dim);
+        let (y_st, n_st) = if dlg.cursor == 1 { (rev, dim) } else { (dim, rev) };
+        blit(buf, dx + 1, dy + 3, y_btn, yw, y_st);
         blit(buf, dx + 1 + yw as u16, dy + 3, &" ".repeat(pad), pad, dim);
-        blit(buf, dx + 1 + (yw + pad) as u16, dy + 3, n_btn, nw, rev);
+        blit(buf, dx + 1 + (yw + pad) as u16, dy + 3, n_btn, nw, n_st);
     } else {
         blit(buf, dx + 1, dy + 3, &padr(hint, iw), iw, dim);
     }
