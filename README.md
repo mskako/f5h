@@ -5,8 +5,8 @@ A Unix TUI file manager inspired by FILMTN, a DOS-era file manager for PC-98 by 
 > 日本語版は [docs/README.ja.md](docs/README.ja.md) をご覧ください。
 
 ```
-e:Edit  x:Run  ::Func  b:Git  t:Tree  c:Copy  m:Move  d:Del  a:Perm  q:Quit
-╭─ Volume Info ───────────────── Path ─── 12:34:56 ─── f5h v0.1 ─╮
+e:Edit  x:Run  ::Func  b:Git  t:Tree  s:Sort  /:Search  ~:Home  J:Jump  c:Copy  m:Move  d:Del  a:Perm  q:Quit
+╭─ Volume Info ───────────────── Path ─── 12:34:56 ─── f5h v0.1.3 ─╮
 │ /dev/sda1 (ext4)            │ /home/user/src                         main ↑2↓1 │
  Free:          897Gi ├─ File Info ──────────────────────────────────────────────────┤
  Curr:  204800  12Fs │ File: main.rs                                                  │
@@ -17,7 +17,7 @@ e:Edit  x:Run  ::Func  b:Git  t:Tree  c:Copy  m:Move  d:Del  a:Perm  q:Quit
 │*M main.rs      49152  2026-03-15 12:00 │   Cargo.toml    512  2026-01-01 00:00   │
 │ A lib.rs        8192  2026-03-10 09:30 │   README.md    2048  2026-03-15 11:00   │
 │   tests/        <DIR> 2026-02-01 14:00 │                                         │
-╰──── / mai█                                             F1:HELP    1/  1 Page ╯
+╰──── / mai█                                    F1:HELP [N▲]   1/  1 Page ╯
 ```
 
 ## Features
@@ -26,18 +26,22 @@ e:Edit  x:Run  ::Func  b:Git  t:Tree  c:Copy  m:Move  d:Del  a:Perm  q:Quit
 - Vim-style `hjkl` navigation + page scrolling
 - 1/2/3/5 column display modes (`!` `@` `#` `%`)
 - File tagging with `Space` (tag + move) and `Home` (toggle all)
-- **File operations**: copy (`c`), move (`m`), delete (`d`), chmod (`a`), mkdir (`K`), open in editor (`e`)
+- **File operations**: copy (`c`), move (`m`), delete (`d`), chmod (`a`), mkdir (`K`)
   - FILMTN-style conflict dialog with U:if-newer / O:overwrite / C:rename / N:skip + Shift+ batch mode
-  - Rename via the Func dialog (`:mv <new name>`)
+  - All option dialogs support `j`/`k`/`↑`/`↓` + `Enter` for keyboard-only navigation
+- **Sort** (`s`): by name, extension, size, or date; toggle ascending/descending with repeated press
+- **Directory jump** (`J`): type any path to navigate directly; `~` expands to `$HOME`
 - **Git integration** (`b` key): add, commit, fetch, push, pull (rebase), merge, switch branch, stash
   - Branch name with ahead/behind count (e.g. `main ↑2↓1`) in the path row
   - Per-file git status in the file list prefix column (M / A / ? / D)
-- **Incremental filename search** (`/`): partial match with regex support, `n`/`N` for next/prev
+- **Incremental filename search** (`/`): partial match with regex support; `n`/`N` for next/prev; highlights persist after `Enter`
 - **Func dialog** (`:`): command palette with filtered list, Tab completion — `:mv`, `:q`
-- File coloring from `LS_COLORS` (GNU/Linux) or `LSCOLORS` (macOS)
+- **F1 help overlay**: full key reference
+- File coloring from `LS_COLORS` (Linux) or `LSCOLORS` (macOS)
 - Symlink-aware navigation
 - Extension-to-program associations (open PDFs with Evince, images with feh, etc.)
 - Fully configurable UI colors and keybindings via TOML
+- Terminal tab title set to `🍥 f5h` on launch
 
 ## Requirements
 
@@ -87,7 +91,8 @@ All bindings (except arrow keys) are remappable in `config.toml`.
 | `a` | Change permissions (octal chmod) |
 | `e` | Open in editor |
 | `K` | Make directory |
-| `J` | Directory jump *(not yet implemented)* |
+| `J` | Directory jump |
+| `s` | Sort dialog |
 
 ### Search
 
@@ -97,7 +102,21 @@ All bindings (except arrow keys) are remappable in `config.toml`.
 | `n` | Jump to next match |
 | `N` | Jump to previous match |
 
-Type to search (partial match, case-insensitive, regex supported). `Enter` confirms and keeps the cursor. `Esc` cancels and returns to the original position. After confirming, `n`/`N` continue navigating matches.
+Type to search (partial match, case-insensitive, regex supported). `Enter` confirms and keeps highlights active. `Esc` cancels and returns to the original position. After confirming, `n`/`N` continue navigating matches. `Esc` in normal mode clears the highlights.
+
+### Sort Dialog (`s`)
+
+| Key | Action |
+|---|---|
+| `N` | Sort by name |
+| `X` | Sort by extension |
+| `S` | Sort by size |
+| `T` | Sort by date |
+| `U` | No sort (filesystem order) |
+| `j`/`k`/`↑`/`↓` | Move cursor |
+| `Enter` | Apply selected sort |
+
+Pressing the same sort key again toggles ascending/descending order. The current sort is shown in the status bar as `[N▲]` / `[X▼]` etc.
 
 ### Func Dialog (`:`)
 
@@ -113,7 +132,7 @@ Type to filter commands. `Tab` completes the first match. `↑`/`↓` moves sele
 
 ### Git Submenu (`b`)
 
-Press `b` to open the git submenu.
+Press `b` to open the git submenu. Use `j`/`k`/`↑`/`↓` to move the cursor and `Enter` to execute, or press the key letter directly.
 
 | Key | Action |
 |---|---|
@@ -132,7 +151,7 @@ Remote operations (fetch / push / pull) prompt for an SSH passphrase. Leave blan
 
 ### Copy / Move Conflict Dialog
 
-When a destination file already exists:
+When a destination file already exists. Use `j`/`k`/`↑`/`↓` + `Enter`, or press the key letter directly.
 
 | Key | Action |
 |---|---|
@@ -226,6 +245,7 @@ attr         = "a"
 edit         = "e"
 mkdir        = "K"
 dir_jump     = "J"
+sort         = "s"
 tree_toggle  = "Tab"
 run          = "x"
 func         = ":"
@@ -238,13 +258,6 @@ search_prev  = "N"
 Key string format: `"a"` `"Enter"` `"Backspace"` `"Tab"` `"Space"` `"Esc"` `"PageUp"` `"PageDown"` `"Home"` `"End"` `"F1"`–`"F12"` `"Ctrl+a"` `"Shift+x"` `"Alt+x"`
 
 Arrow keys are hardcoded aliases for `hjkl` and cannot be rebound.
-
-## Roadmap
-
-- `J`: directory jump dialog
-- Sort modes
-- `F1`: help overlay
-- Copy/Move dialog: directory tree picker on Enter with blank input
 
 ## License
 
