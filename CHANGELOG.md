@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-19
+
+### Added
+
+- **Process viewer** (`:proc` in func dialog): top/ps-like process list
+  - 7-row FILMTN-style header with two panels:
+    - Left: load averages, CPU core count, memory used/total/%, swap, uptime
+    - Right: PID, PPID, TTY, user, stat, %CPU, %MEM, VSZ, RSS, command name, full cmdline, start time, elapsed time, CWD, thread count, open FD count
+  - Scrollable process list: PID / ユーザ / %CPU / %MEM / VSZ / RSS / STAT / コマンド
+  - Row color by STAT: R=yellow / T=cyan / D=green / Z=magenta / S and others=white; CPU ≥ 50% overrides to red
+  - Sort (`s`): cycle CPU → MEM → PID → USER → CMD; same key toggles ascending/descending; indicator shown in column header
+  - Signal menu (`x`): SIGHUP(1) / SIGINT(2) / SIGKILL(9) / SIGTERM(15) / SIGCONT(18) / SIGSTOP(20); `j`/`k`/`Enter` or direct key
+  - FD list (`f`/`Enter`): fd number, type tag (stdin/stdout/stderr/file/socket/pipe/anon), target path; `r` refresh, `Esc`/`q` back
+  - F1 help overlay specific to proc/FD mode
+  - Mode-aware menu bar: switches to proc/FD-specific key hints when in proc mode
+  - Auto-refresh every 500ms (paused while FD list is open)
+  - Reads `/proc` filesystem directly — no `ps` subprocess; TTY decoded from tty_nr (pts/N, ttyN, ttySN)
+  - Header labels in cyan, values in white; load averages in green; command name in yellow
+
+### Fixed
+
+- Func dialog: selecting a command with `↑`/`↓` (without typing) and pressing `Enter` incorrectly showed "不明なコマンド" — the Enter handler now resolves the selected candidate by index from the filtered list when the input field is empty
+- Proc mode top border: trailing `─` of `f5h v0.1` was rendered in yellow instead of cyan
+- Proc mode top border: clock is now right-aligned (consistent with file mode)
+- Proc mode top border: gap in the border line between count label and fill `─` characters is fixed
+
 ## [0.1.3] - 2026-04-16
 
 ### Added

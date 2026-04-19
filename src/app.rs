@@ -52,6 +52,7 @@ pub struct FuncCmd {
 /// 利用可能なコマンド一覧
 pub static FUNC_CMDS: &[FuncCmd] = &[
     FuncCmd { name: "mv",   args: "<name>", desc_ja: "カーソルファイルをリネーム", desc_en: "rename cursor file" },
+    FuncCmd { name: "proc", args: "",       desc_ja: "プロセス一覧",               desc_en: "process viewer" },
     FuncCmd { name: "q",    args: "",       desc_ja: "終了 (quit)",               desc_en: "quit" },
     FuncCmd { name: "help", args: "",       desc_ja: "コマンド一覧",               desc_en: "list commands" },
 ];
@@ -209,6 +210,22 @@ pub struct App {
     pub pager: String,
     pub editor: String,
     pub ext_programs: HashMap<String, String>,
+    // ── proc モード ──────────────────────────────────────────────────────
+    pub proc_mode: bool,
+    pub proc_entries: Vec<crate::proc::ProcEntry>,
+    pub proc_cursor: usize,
+    pub proc_offset: usize,
+    pub proc_sort: crate::proc::ProcSortMode,
+    pub proc_sort_asc: bool,
+    pub proc_signal_menu: Option<crate::proc::ProcSignalMenu>,
+    pub proc_detail: crate::proc::ProcDetail,
+    // ── fd モード ────────────────────────────────────────────────────────
+    pub fd_mode: bool,
+    pub fd_pid: u32,
+    pub fd_proc_name: String,
+    pub fd_entries: Vec<crate::proc::FdEntry>,
+    pub fd_cursor: usize,
+    pub fd_offset: usize,
 }
 
 /// src の mtime が dst より新しいか
@@ -324,6 +341,20 @@ impl App {
             git_dialog: None,
             git_running: false,
             file_dialog: None,
+            proc_mode: false,
+            proc_entries: Vec::new(),
+            proc_cursor: 0,
+            proc_offset: 0,
+            proc_sort: crate::proc::ProcSortMode::Cpu,
+            proc_sort_asc: false,
+            proc_signal_menu: None,
+            proc_detail: crate::proc::ProcDetail::default(),
+            fd_mode: false,
+            fd_pid: 0,
+            fd_proc_name: String::new(),
+            fd_entries: Vec::new(),
+            fd_cursor: 0,
+            fd_offset: 0,
         };
         app.load_entries()?;
         app.update_file_info();
@@ -1274,6 +1305,20 @@ mod tests {
             pager: "less".to_string(),
             editor: "nano".to_string(),
             ext_programs: HashMap::new(),
+            proc_mode: false,
+            proc_entries: Vec::new(),
+            proc_cursor: 0,
+            proc_offset: 0,
+            proc_sort: crate::proc::ProcSortMode::Cpu,
+            proc_sort_asc: false,
+            proc_signal_menu: None,
+            proc_detail: crate::proc::ProcDetail::default(),
+            fd_mode: false,
+            fd_pid: 0,
+            fd_proc_name: String::new(),
+            fd_entries: Vec::new(),
+            fd_cursor: 0,
+            fd_offset: 0,
         };
         app.load_entries().unwrap();
         app.update_file_info();

@@ -6,7 +6,7 @@ A Unix TUI file manager inspired by FILMTN, a DOS-era file manager for PC-98 by 
 
 ```
 e:Edit  x:Run  ::Func  b:Git  t:Tree  s:Sort  /:Search  ~:Home  J:Jump  c:Copy  m:Move  d:Del  a:Perm  q:Quit
-╭─ Volume Info ───────────────── Path ─── 12:34:56 ─── f5h v0.1.3 ─╮
+╭─ Volume Info ───────────────── Path ─── 12:34:56 ─── f5h v0.2.0 ─╮
 │ /dev/sda1 (ext4)            │ /home/user/src                         main ↑2↓1 │
  Free:          897Gi ├─ File Info ──────────────────────────────────────────────────┤
  Curr:  204800  12Fs │ File: main.rs                                                  │
@@ -35,7 +35,8 @@ e:Edit  x:Run  ::Func  b:Git  t:Tree  s:Sort  /:Search  ~:Home  J:Jump  c:Copy  
   - Branch name with ahead/behind count (e.g. `main ↑2↓1`) in the path row
   - Per-file git status in the file list prefix column (M / A / ? / D)
 - **Incremental filename search** (`/`): partial match with regex support; `n`/`N` for next/prev; highlights persist after `Enter`
-- **Func dialog** (`:`): command palette with filtered list, Tab completion — `:mv`, `:q`
+- **Func dialog** (`:`): command palette with filtered list, Tab completion — `:mv`, `:proc`, `:q`
+- **Process viewer** (`:proc`): top/ps-like process list with signal sending and FD inspection (see below)
 - **F1 help overlay**: full key reference
 - File coloring from `LS_COLORS` (Linux) or `LSCOLORS` (macOS)
 - Symlink-aware navigation
@@ -125,6 +126,7 @@ Press `:` to open the Func dialog — a command palette with a filtered list and
 | Command | Action |
 |---|---|
 | `:mv <name>` | Rename cursor file |
+| `:proc` | Open process viewer |
 | `:q` / `:quit` | Quit |
 | `:help` | Show all commands |
 
@@ -148,6 +150,61 @@ Press `b` to open the git submenu. Use `j`/`k`/`↑`/`↓` to move the cursor an
 | `T` | Stash pop |
 
 Remote operations (fetch / push / pull) prompt for an SSH passphrase. Leave blank to use the SSH agent.
+
+### Process Viewer (`:proc`)
+
+Open with `:proc` in the func dialog. Shows a top/ps-like process list with a 7-row system-info header.
+
+**Header panels:**
+
+| Left panel | Right panel |
+|---|---|
+| Load averages (1/5/15 min) | PID, PPID, TTY, User, Stat |
+| CPU core count | %CPU, %MEM, VSZ, RSS |
+| Memory used/total/% | Command name |
+| Swap used/total | Full cmdline (args) |
+| Uptime | Start time, elapsed time |
+| | CWD, thread count, open FDs |
+
+**Process list keys:**
+
+| Key | Action |
+|---|---|
+| `j` / `k` / `↑` / `↓` | Move cursor |
+| `g` / `G` | First / last entry |
+| `PageUp` / `PageDown` | Scroll page |
+| `s` | Cycle sort mode (CPU → MEM → PID → USER → CMD); same key toggles asc/desc |
+| `x` | Open signal menu for selected process |
+| `f` / `Enter` | Open FD list for selected process |
+| `r` | Refresh process list |
+| `F1` | Help overlay |
+| `q` / `Esc` | Return to file manager |
+
+**Row colors** (CPU ≥ 50% overrides):
+
+| STAT | Color |
+|---|---|
+| `R` (running) | Yellow |
+| `T` (stopped) | Cyan |
+| `D` (disk sleep) | Green |
+| `Z` (zombie) | Magenta |
+| `S`, `I`, others | White |
+| CPU ≥ 50% | Red (overrides STAT color) |
+
+**Signal menu** (`x`): use `j`/`k`/`Enter` or press the letter key directly.
+
+| Key | Signal |
+|---|---|
+| `h` | SIGHUP (1) — reload / restart |
+| `i` | SIGINT (2) — interrupt (Ctrl+C) |
+| `k` | SIGKILL (9) — force kill |
+| `t` | SIGTERM (15) — terminate |
+| `c` | SIGCONT (18) — continue |
+| `s` | SIGSTOP (20) — stop |
+
+**FD list** (`f` / `Enter`): scrollable list of open file descriptors. Columns: fd number, type tag (stdin / stdout / stderr / file / socket / pipe / anon), target path. `r` refreshes; `F1` help; `Esc`/`q` returns to process list.
+
+The process list auto-refreshes every 500 ms (paused while the FD list is open). All process data is read directly from `/proc` — no `ps` subprocess is spawned. TTY is decoded from the kernel tty_nr field (`pts/N`, `ttyN`, `ttySN`).
 
 ### Copy / Move Conflict Dialog
 

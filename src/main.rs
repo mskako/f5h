@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod fs_utils;
+mod proc;
 mod ui;
 
 use anyhow::Result;
@@ -64,6 +65,17 @@ fn main() -> Result<()> {
         terminal.draw(|f| ui::ui(f, &app))?;
 
         if !event::poll(Duration::from_millis(500))? {
+            // proc モード中はタイムアウトのたびに自動リフレッシュ
+            if app.proc_mode && app.proc_signal_menu.is_none() && !app.fd_mode {
+                let mut entries = proc::get_proc_list();
+                proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
+                app.proc_entries = entries;
+                app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
+                if let Some(e) = app.proc_entries.get(app.proc_cursor) {
+                    let pid = e.pid;
+                    app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
+                }
+            }
             continue;
         }
         let Event::Key(key) = event::read()? else {
@@ -83,6 +95,197 @@ fn main() -> Result<()> {
             // ヘルプオーバーレイ表示中は任意のキーで閉じる
             if app.show_help {
                 app.show_help = false;
+                continue;
+            }
+            // ── proc モード ───────────────────────────────────────
+            if app.proc_mode {
+                // ── fd モード ─────────────────────────────────────
+                if app.fd_mode {
+                    let fd_lh = term_h.saturating_sub(1 + 2 + ui::PROC_LIST_HEADER as usize).max(1);
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Esc, _) | (KeyCode::Char('q'), KeyModifiers::NONE) => {
+                            app.fd_mode = false;
+                        }
+                        (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                            if app.fd_cursor > 0 { app.fd_cursor -= 1; }
+                        }
+                        (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                            if app.fd_cursor + 1 < app.fd_entries.len() { app.fd_cursor += 1; }
+                        }
+                        (KeyCode::Char('g'), KeyModifiers::NONE) => { app.fd_cursor = 0; }
+                        (KeyCode::Char('G'), _) => {
+                            app.fd_cursor = app.fd_entries.len().saturating_sub(1);
+                        }
+                        (KeyCode::PageUp, _) => {
+                            app.fd_cursor = app.fd_cursor.saturating_sub(fd_lh);
+                        }
+                        (KeyCode::PageDown, _) => {
+                            let n = app.fd_entries.len();
+                            app.fd_cursor = (app.fd_cursor + fd_lh).min(n.saturating_sub(1));
+                        }
+                        (KeyCode::Char('r'), KeyModifiers::NONE) => {
+                            app.fd_entries = proc::get_fd_list(app.fd_pid);
+                            app.fd_cursor = app.fd_cursor.min(app.fd_entries.len().saturating_sub(1));
+                        }
+                        (KeyCode::F(1), KeyModifiers::NONE) => {
+                            app.show_help = true;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // ── シグナルメニュー ────────────────────────────────
+                if app.proc_signal_menu.is_some() {
+                    match (key.code, key.modifiers) {
+                        (KeyCode::Esc, _) => { app.proc_signal_menu = None; }
+                        (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                            if let Some(ref mut m) = app.proc_signal_menu {
+                                if m.cursor > 0 { m.cursor -= 1; }
+                            }
+                        }
+                        (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                            if let Some(ref mut m) = app.proc_signal_menu {
+                                if m.cursor + 1 < proc::SIGNAL_ITEMS.len() { m.cursor += 1; }
+                            }
+                        }
+                        (KeyCode::Enter, KeyModifiers::NONE) => {
+                            if let Some(ref m) = app.proc_signal_menu {
+                                let (sig, _, _, _) = proc::SIGNAL_ITEMS[m.cursor];
+                                match proc::kill_pid(m.pid, sig) {
+                                    Ok(()) => {
+                                        app.success_msg = Some(format!(
+                                            "Sent signal {} to {} (PID {})", sig, m.proc_name, m.pid
+                                        ));
+                                    }
+                                    Err(e) => { app.error_msg = Some(e.to_string()); }
+                                }
+                            }
+                            app.proc_signal_menu = None;
+                            let mut entries = proc::get_proc_list();
+                            proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
+                            app.proc_entries = entries;
+                            app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
+                            if let Some(e) = app.proc_entries.get(app.proc_cursor) {
+                                let pid = e.pid;
+                                app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
+                            }
+                        }
+                        (KeyCode::Char(c), KeyModifiers::NONE) => {
+                            let sig_opt = proc::SIGNAL_ITEMS.iter()
+                                .find(|(_, key_ch, _, _)| *key_ch == c);
+                            if let Some(&(sig, _, _, _)) = sig_opt {
+                                if let Some(ref m) = app.proc_signal_menu {
+                                    match proc::kill_pid(m.pid, sig) {
+                                        Ok(()) => {
+                                            app.success_msg = Some(format!(
+                                                "Sent signal {} to {} (PID {})", sig, m.proc_name, m.pid
+                                            ));
+                                        }
+                                        Err(e) => { app.error_msg = Some(e.to_string()); }
+                                    }
+                                }
+                                app.proc_signal_menu = None;
+                                let mut entries = proc::get_proc_list();
+                                proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
+                                app.proc_entries = entries;
+                                app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
+                                if let Some(e) = app.proc_entries.get(app.proc_cursor) {
+                                    let pid = e.pid;
+                                    app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // ── proc リストナビゲーション ───────────────────────
+                let proc_lh = term_h
+                    .saturating_sub(1 + 2 + ui::HEADER_ROWS as usize + 1)
+                    .max(1);
+                let prev_cursor = app.proc_cursor;
+                match (key.code, key.modifiers) {
+                    (KeyCode::Esc, _) | (KeyCode::Char('q'), KeyModifiers::NONE) => {
+                        app.proc_mode = false;
+                        app.proc_signal_menu = None;
+                        app.fd_mode = false;
+                    }
+                    (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                        if app.proc_cursor > 0 { app.proc_cursor -= 1; }
+                    }
+                    (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                        let n = app.proc_entries.len();
+                        if app.proc_cursor + 1 < n { app.proc_cursor += 1; }
+                    }
+                    (KeyCode::Char('g'), KeyModifiers::NONE) => { app.proc_cursor = 0; }
+                    (KeyCode::Char('G'), _) => {
+                        app.proc_cursor = app.proc_entries.len().saturating_sub(1);
+                    }
+                    (KeyCode::PageUp, _) => {
+                        app.proc_cursor = app.proc_cursor.saturating_sub(proc_lh);
+                    }
+                    (KeyCode::PageDown, _) => {
+                        let n = app.proc_entries.len();
+                        app.proc_cursor = (app.proc_cursor + proc_lh).min(n.saturating_sub(1));
+                    }
+                    (KeyCode::Char('r'), KeyModifiers::NONE) => {
+                        let mut entries = proc::get_proc_list();
+                        proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
+                        app.proc_entries = entries;
+                        app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
+                    }
+                    (KeyCode::Char('x'), KeyModifiers::NONE) => {
+                        if let Some(entry) = app.proc_entries.get(app.proc_cursor) {
+                            app.proc_signal_menu = Some(proc::ProcSignalMenu {
+                                cursor: 0,
+                                pid: entry.pid,
+                                proc_name: entry.command.clone(),
+                            });
+                        }
+                    }
+                    (KeyCode::Enter, KeyModifiers::NONE)
+                    | (KeyCode::Char('f'), KeyModifiers::NONE) => {
+                        // fd モードを開く
+                        if let Some(entry) = app.proc_entries.get(app.proc_cursor) {
+                            app.fd_pid = entry.pid;
+                            app.fd_proc_name = entry.command.clone();
+                            app.fd_entries = proc::get_fd_list(entry.pid);
+                            app.fd_cursor = 0;
+                            app.fd_offset = 0;
+                            app.fd_mode = true;
+                        }
+                    }
+                    (KeyCode::Char('s'), KeyModifiers::NONE) => {
+                        use proc::ProcSortMode::*;
+                        const MODES: &[proc::ProcSortMode] = &[Cpu, Mem, Pid, User, Command];
+                        let idx = MODES.iter().position(|&m| m == app.proc_sort).unwrap_or(0);
+                        let next = MODES[(idx + 1) % MODES.len()];
+                        if next == app.proc_sort {
+                            app.proc_sort_asc = !app.proc_sort_asc;
+                        } else {
+                            app.proc_sort = next;
+                            app.proc_sort_asc = next.default_asc();
+                        }
+                        let mut entries = proc::get_proc_list();
+                        proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
+                        app.proc_entries = entries;
+                        app.proc_cursor = 0;
+                        app.proc_offset = 0;
+                    }
+                    (KeyCode::F(1), KeyModifiers::NONE) => {
+                        app.show_help = true;
+                    }
+                    _ => {}
+                }
+                // カーソルが移動したら詳細を更新
+                if app.proc_cursor != prev_cursor {
+                    if let Some(e) = app.proc_entries.get(app.proc_cursor) {
+                        let pid = e.pid;
+                        app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
+                    }
+                }
                 continue;
             }
             // ── ソートダイアログ ──────────────────────────────────
@@ -131,9 +334,21 @@ fn main() -> Result<()> {
                     (KeyCode::Enter, KeyModifiers::NONE) => {
                         if let Some(ref dlg) = app.func_dialog {
                             let line: String = dlg.input.iter().collect();
+                            let selected = dlg.selected;
                             let mut parts = line.trim().splitn(2, ' ');
-                            let cmd = parts.next().unwrap_or("").to_lowercase();
+                            let cmd_raw = parts.next().unwrap_or("").to_string();
                             let arg = parts.next().unwrap_or("").trim().to_string();
+                            // 完全一致しない場合は j/k で選択中の候補を使う
+                            let cmd = if app::FUNC_CMDS.iter().any(|c| c.name == cmd_raw.as_str()) {
+                                cmd_raw.clone()
+                            } else {
+                                app::FUNC_CMDS.iter()
+                                    .filter(|c| c.name.starts_with(cmd_raw.as_str()))
+                                    .nth(selected)
+                                    .map(|c| c.name.to_string())
+                                    .unwrap_or_else(|| cmd_raw.to_lowercase())
+                            };
+                            let cmd = cmd.to_lowercase();
                             app.func_dialog = None;
                             match cmd.as_str() {
                                 "q" | "quit" => app.quit = true,
@@ -154,6 +369,18 @@ fn main() -> Result<()> {
                                             }
                                         }
                                     }
+                                }
+                                "proc" => {
+                                    let mut entries = proc::get_proc_list();
+                                    proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
+                                    app.proc_entries = entries;
+                                    app.proc_cursor = 0;
+                                    app.proc_offset = 0;
+                                    if let Some(e) = app.proc_entries.first() {
+                                        let pid = e.pid;
+                                        app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
+                                    }
+                                    app.proc_mode = true;
                                 }
                                 "help" => {
                                     // ヘルプ: ダイアログを再表示（入力クリア）
