@@ -129,13 +129,16 @@ pub struct FdEntry {
     pub target: String,
 }
 
-pub fn get_fd_list(pid: u32) -> Vec<FdEntry> {
+pub fn get_fd_list(pid: u32) -> Result<Vec<FdEntry>, String> {
     let fd_dir = format!("/proc/{}/fd", pid);
+    let dir = std::fs::read_dir(&fd_dir).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::PermissionDenied {
+            format!("Permission denied: cannot read /proc/{}/fd (try running as root)", pid)
+        } else {
+            format!("Cannot read /proc/{}/fd: {}", pid, e)
+        }
+    })?;
     let mut entries = Vec::new();
-    let dir = match std::fs::read_dir(&fd_dir) {
-        Ok(d) => d,
-        Err(_) => return entries,
-    };
     for entry in dir.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
         let fd: u32 = match name.parse() {
@@ -149,7 +152,7 @@ pub fn get_fd_list(pid: u32) -> Vec<FdEntry> {
         entries.push(FdEntry { fd, fd_type, target });
     }
     entries.sort_by_key(|e| e.fd);
-    entries
+    Ok(entries)
 }
 
 fn classify_fd(fd: u32, target: &str) -> FdType {

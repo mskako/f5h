@@ -224,8 +224,11 @@ pub struct App {
     pub fd_pid: u32,
     pub fd_proc_name: String,
     pub fd_entries: Vec<crate::proc::FdEntry>,
+    pub fd_error: Option<String>,
     pub fd_cursor: usize,
     pub fd_offset: usize,
+    // ── root 警告 ─────────────────────────────────────────────────────────
+    pub is_root: bool,
 }
 
 /// src の mtime が dst より新しいか
@@ -353,8 +356,10 @@ impl App {
             fd_pid: 0,
             fd_proc_name: String::new(),
             fd_entries: Vec::new(),
+            fd_error: None,
             fd_cursor: 0,
             fd_offset: 0,
+            is_root: unsafe { libc::geteuid() } == 0,
         };
         app.load_entries()?;
         app.update_file_info();
@@ -1317,8 +1322,10 @@ mod tests {
             fd_pid: 0,
             fd_proc_name: String::new(),
             fd_entries: Vec::new(),
+            fd_error: None,
             fd_cursor: 0,
             fd_offset: 0,
+            is_root: false,
         };
         app.load_entries().unwrap();
         app.update_file_info();

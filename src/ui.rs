@@ -260,7 +260,9 @@ pub fn ui(frame: &mut Frame, app: &App) {
     let st_w = sw(&status_text);
     let rev = Style::default().add_modifier(Modifier::REVERSED);
     blit_ch(buf, mx, by, '╰', cyan);
-    if let Some(ref s) = app.search.as_ref().filter(|s| !s.confirmed) {
+    if app.is_root {
+        render_bottom_fill(buf, mx, by, mw, &status_text, st_w, rev, true);
+    } else if let Some(ref s) = app.search.as_ref().filter(|s| !s.confirmed) {
         // 検索バーを底辺ボーダーに埋め込む（入力中のみ）
         let search_prefix = "/ ";
         let prefix_w = sw(search_prefix);
@@ -2553,10 +2555,8 @@ fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
         let f1_lbl = if app.lang_en { "F1:Help" } else { "F1:ヘルプ" };
         let status = format!(" {}  {:>3}/{:<3} {}", f1_lbl, page, total_pages, app.labels.page_unit);
         let st_w = sw(&status);
-        let fill_n = mw.saturating_sub(st_w + 2);
         blit_ch(buf, mx, by, '╰', cyan);
-        blit(buf, mx + 1, by, &"─".repeat(fill_n), fill_n, cyan);
-        blit(buf, mx + 1 + fill_n as u16, by, &status, st_w, rev);
+        render_bottom_fill(buf, mx, by, mw, &status, st_w, rev, app.is_root);
         blit_ch(buf, mx + mw as u16 - 1, by, '╯', cyan);
     }
 }
@@ -2622,6 +2622,7 @@ fn render_fd_view(frame: &mut Frame, main_area: Rect, app: &App) {
     // ── fd 一覧 ───────────────────────────────────────────────────────────
     let list_start_y = my + 3;
     let list_h = (my + mh - 1).saturating_sub(list_start_y) as usize;
+    let red_style = Style::default().fg(Color::Red);
     let n = app.fd_entries.len();
     let offset = if app.fd_cursor < app.fd_offset {
         app.fd_cursor
@@ -2631,25 +2632,41 @@ fn render_fd_view(frame: &mut Frame, main_area: Rect, app: &App) {
         app.fd_offset
     };
 
-    for row_i in 0..list_h {
-        let screen_y = list_start_y + row_i as u16;
-        if screen_y >= my + mh - 1 { break; }
-        blit_ch(buf, mx, screen_y, '│', cyan);
-        let entry_idx = offset + row_i;
-        if entry_idx >= n {
-            blit(buf, mx + 1, screen_y, &" ".repeat(iw), iw, Style::default());
-        } else {
-            let e = &app.fd_entries[entry_idx];
-            let is_cur = entry_idx == app.fd_cursor;
-            let target_avail = iw.saturating_sub(14);
-            let line = format!(
-                " {:>4}  {:<6}  {}",
-                e.fd, e.fd_type.tag(), trunc(&e.target, target_avail)
-            );
-            let style = if is_cur { rev } else { white };
-            blit(buf, mx + 1, screen_y, &padr(&line, iw), iw, style);
+    if let Some(ref err_msg) = app.fd_error {
+        // パーミッションエラー等を表示
+        for row_i in 0..list_h {
+            let screen_y = list_start_y + row_i as u16;
+            if screen_y >= my + mh - 1 { break; }
+            blit_ch(buf, mx, screen_y, '│', cyan);
+            if row_i == list_h / 2 {
+                let msg = format!(" ⚠ {}", err_msg);
+                blit(buf, mx + 1, screen_y, &padr(&msg, iw), iw, red_style);
+            } else {
+                blit(buf, mx + 1, screen_y, &" ".repeat(iw), iw, Style::default());
+            }
+            blit_ch(buf, mx + mw as u16 - 1, screen_y, '│', cyan);
         }
-        blit_ch(buf, mx + mw as u16 - 1, screen_y, '│', cyan);
+    } else {
+        for row_i in 0..list_h {
+            let screen_y = list_start_y + row_i as u16;
+            if screen_y >= my + mh - 1 { break; }
+            blit_ch(buf, mx, screen_y, '│', cyan);
+            let entry_idx = offset + row_i;
+            if entry_idx >= n {
+                blit(buf, mx + 1, screen_y, &" ".repeat(iw), iw, Style::default());
+            } else {
+                let e = &app.fd_entries[entry_idx];
+                let is_cur = entry_idx == app.fd_cursor;
+                let target_avail = iw.saturating_sub(14);
+                let line = format!(
+                    " {:>4}  {:<6}  {}",
+                    e.fd, e.fd_type.tag(), trunc(&e.target, target_avail)
+                );
+                let style = if is_cur { rev } else { white };
+                blit(buf, mx + 1, screen_y, &padr(&line, iw), iw, style);
+            }
+            blit_ch(buf, mx + mw as u16 - 1, screen_y, '│', cyan);
+        }
     }
 
     // ── 下枠 ─────────────────────────────────────────────────────────────
@@ -2660,11 +2677,46 @@ fn render_fd_view(frame: &mut Frame, main_area: Rect, app: &App) {
         let f1_lbl = if app.lang_en { "F1:Help" } else { "F1:ヘルプ" };
         let status = format!(" {}  {:>3}/{:<3} {}", f1_lbl, page, total, app.labels.page_unit);
         let st_w = sw(&status);
-        let fill_n = mw.saturating_sub(st_w + 2);
         blit_ch(buf, mx, by, '╰', cyan);
-        blit(buf, mx + 1, by, &"─".repeat(fill_n), fill_n, cyan);
-        blit(buf, mx + 1 + fill_n as u16, by, &status, st_w, rev);
+        render_bottom_fill(buf, mx, by, mw, &status, st_w, rev, app.is_root);
         blit_ch(buf, mx + mw as u16 - 1, by, '╯', cyan);
+    }
+}
+
+/// ボトムボーダーの内側を描画する共通ヘルパー。
+/// is_root=true のとき赤黒縞模様を敷き、右端に status を REVERSED で重ねる。
+/// is_root=false のとき通常の罫線 + status を描画する。
+fn render_bottom_fill(
+    buf: &mut ratatui::buffer::Buffer,
+    mx: u16, by: u16, mw: usize,
+    status: &str, st_w: usize,
+    rev: Style, is_root: bool,
+) {
+    let inner_w = mw.saturating_sub(2);
+    if is_root {
+        let warn_lbl = " !! ROOT !!";
+        let warn_w = sw(warn_lbl);
+        let stripe_red = Style::default().fg(Color::White).bg(Color::Red)
+            .add_modifier(Modifier::SLOW_BLINK | Modifier::BOLD);
+        let stripe_blk = Style::default().fg(Color::Red).bg(Color::Black)
+            .add_modifier(Modifier::SLOW_BLINK | Modifier::BOLD);
+        let mut xi = mx + 1;
+        let mut col = 0usize;
+        while col < inner_w {
+            let remaining = inner_w - col;
+            let chunk = warn_w.min(remaining);
+            let st = if (col / warn_w) % 2 == 0 { stripe_red } else { stripe_blk };
+            blit(buf, xi, by, warn_lbl, chunk, st);
+            xi += chunk as u16;
+            col += chunk;
+        }
+        let status_x = mx + 1 + inner_w.saturating_sub(st_w) as u16;
+        blit(buf, status_x, by, status, st_w, rev);
+    } else {
+        let fill_n = inner_w.saturating_sub(st_w);
+        let cyan = Style::default().fg(Color::Cyan);
+        blit(buf, mx + 1, by, &"─".repeat(fill_n), fill_n, cyan);
+        blit(buf, mx + 1 + fill_n as u16, by, status, st_w, rev);
     }
 }
 

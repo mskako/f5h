@@ -124,7 +124,10 @@ fn main() -> Result<()> {
                             app.fd_cursor = (app.fd_cursor + fd_lh).min(n.saturating_sub(1));
                         }
                         (KeyCode::Char('r'), KeyModifiers::NONE) => {
-                            app.fd_entries = proc::get_fd_list(app.fd_pid);
+                            match proc::get_fd_list(app.fd_pid) {
+                                Ok(list) => { app.fd_entries = list; app.fd_error = None; }
+                                Err(e)   => { app.fd_entries.clear(); app.fd_error = Some(e); }
+                            }
                             app.fd_cursor = app.fd_cursor.min(app.fd_entries.len().saturating_sub(1));
                         }
                         (KeyCode::F(1), KeyModifiers::NONE) => {
@@ -251,7 +254,10 @@ fn main() -> Result<()> {
                         if let Some(entry) = app.proc_entries.get(app.proc_cursor) {
                             app.fd_pid = entry.pid;
                             app.fd_proc_name = entry.command.clone();
-                            app.fd_entries = proc::get_fd_list(entry.pid);
+                            match proc::get_fd_list(entry.pid) {
+                                Ok(list) => { app.fd_entries = list; app.fd_error = None; }
+                                Err(e)   => { app.fd_entries.clear(); app.fd_error = Some(e); }
+                            }
                             app.fd_cursor = 0;
                             app.fd_offset = 0;
                             app.fd_mode = true;
