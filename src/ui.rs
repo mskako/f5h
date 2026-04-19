@@ -394,7 +394,7 @@ fn render_header(frame: &mut Frame, main_area: Rect, inner: Rect, app: &App) {
         let pas_lbl = app.labels.path_lbl;
         let pas_suf = " ";
         let ver_pre = "─── ";
-        let ver_lbl = "f5h v0.1";
+        let ver_lbl = concat!("f5h v", env!("CARGO_PKG_VERSION"));
         let ver_suf = " ─";
         let fixed = LEFT_W
             + sw(pas_pre)
@@ -2273,7 +2273,7 @@ fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
         let count_u = if app.lang_en { " procs " } else { " 個 " }; // 単位部分（水色）
         let sep     = "─── ";
         let ver_pre = "─── ";
-        let ver_lbl = "f5h v0.1";
+        let ver_lbl = concat!("f5h v", env!("CARGO_PKG_VERSION"));
         let ver_suf = " ─";
         // fixed = ╭ + pre + title + sep + count_n + count_u + [fill] + clock_s + ver_pre + ver_lbl + ver_suf + ╮
         let fixed = 1 + sw(pre) + sw(title) + sw(sep) + sw(&count_n) + sw(count_u)
@@ -2585,7 +2585,7 @@ fn render_fd_view(frame: &mut Frame, main_area: Rect, app: &App) {
         let count_s = format!(" {} {} ", n_fds, count_unit);
         let clock_s = format!(" {} ", now_str());
         let ver_pre = "─── ";
-        let ver_lbl = "f5h v0.1";
+        let ver_lbl = concat!("f5h v", env!("CARGO_PKG_VERSION"));
         let ver_suf = " ─";
         let fixed = 1 + sw(&title) + 4 + sw(&count_s)
             + sw(&clock_s) + sw(ver_pre) + sw(ver_lbl) + sw(ver_suf) + 1;
