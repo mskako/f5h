@@ -176,6 +176,7 @@ pub fn ui(frame: &mut Frame, app: &App) {
         }
         render_error_msg(frame, app);
         render_success_msg(frame, app);
+        render_help_overlay(frame, app);
         return;
     }
 
