@@ -51,10 +51,11 @@ pub struct FuncCmd {
 
 /// 利用可能なコマンド一覧
 pub static FUNC_CMDS: &[FuncCmd] = &[
-    FuncCmd { name: "mv",   args: "<name>", desc_ja: "カーソルファイルをリネーム", desc_en: "rename cursor file" },
-    FuncCmd { name: "proc", args: "",       desc_ja: "プロセス一覧",               desc_en: "process viewer" },
-    FuncCmd { name: "q",    args: "",       desc_ja: "終了 (quit)",               desc_en: "quit" },
-    FuncCmd { name: "help", args: "",       desc_ja: "コマンド一覧",               desc_en: "list commands" },
+    FuncCmd { name: "mv",    args: "<name>", desc_ja: "カーソルファイルをリネーム", desc_en: "rename cursor file" },
+    FuncCmd { name: "mkdir", args: "<name>", desc_ja: "ディレクトリ作成",           desc_en: "make directory" },
+    FuncCmd { name: "proc",  args: "",       desc_ja: "プロセス一覧",               desc_en: "process viewer" },
+    FuncCmd { name: "q",     args: "",       desc_ja: "終了 (quit)",               desc_en: "quit" },
+    FuncCmd { name: "help",  args: "",       desc_ja: "コマンド一覧",               desc_en: "list commands" },
 ];
 
 #[derive(Clone, Debug, Default)]
@@ -367,6 +368,7 @@ impl App {
     }
 
     pub fn load_entries(&mut self) -> Result<()> {
+        self.search = None;
         self.entries.clear();
         if self.current_dir.parent().is_some() {
             let parent_mode = fs::metadata(&self.current_dir)

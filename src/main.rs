@@ -376,6 +376,18 @@ fn main() -> Result<()> {
                                         }
                                     }
                                 }
+                                "mkdir" => {
+                                    app.file_dialog = Some(app::FileDialog {
+                                        kind: app::DialogKind::Mkdir,
+                                        input: arg.chars().collect(),
+                                        cursor: arg.chars().count(),
+                                        targets: vec![],
+                                        dest: None,
+                                        conflict_rename: false,
+                                        error: None,
+                                        overwrite: None,
+                                    });
+                                }
                                 "proc" => {
                                     let mut entries = proc::get_proc_list();
                                     proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
