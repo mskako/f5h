@@ -18,6 +18,25 @@ use fs_utils::{git_command_silent, git_fetch, git_merge_no_ff, git_pull, git_pus
 use std::sync::mpsc;
 use ui::HEADER_ROWS;
 
+/// プロセス一覧をリフレッシュし、カーソルを PID で追跡する。
+/// 旧カーソル位置の PID を記憶し、リフレッシュ後に同じ PID を探して復元する。
+/// PID が消えた場合はインデックスをクランプする。
+macro_rules! refresh_procs {
+    ($app:expr) => {{
+        let tracked_pid = $app.proc_entries.get($app.proc_cursor).map(|e| e.pid);
+        let mut entries = proc::get_proc_list();
+        proc::sort_proc_entries(&mut entries, $app.proc_sort, $app.proc_sort_asc);
+        $app.proc_entries = entries;
+        $app.proc_cursor = tracked_pid
+            .and_then(|pid| $app.proc_entries.iter().position(|e| e.pid == pid))
+            .unwrap_or_else(|| $app.proc_cursor.min($app.proc_entries.len().saturating_sub(1)));
+        if let Some(e) = $app.proc_entries.get($app.proc_cursor) {
+            let pid = e.pid;
+            $app.proc_detail = proc::get_proc_detail(pid, &$app.proc_entries);
+        }
+    }};
+}
+
 fn main() -> Result<()> {
     let config = load_config();
 
@@ -67,14 +86,7 @@ fn main() -> Result<()> {
         if !event::poll(Duration::from_millis(500))? {
             // proc モード中はタイムアウトのたびに自動リフレッシュ
             if app.proc_mode && app.proc_signal_menu.is_none() && !app.fd_mode {
-                let mut entries = proc::get_proc_list();
-                proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
-                app.proc_entries = entries;
-                app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
-                if let Some(e) = app.proc_entries.get(app.proc_cursor) {
-                    let pid = e.pid;
-                    app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
-                }
+                refresh_procs!(app);
             }
             continue;
         }
@@ -165,14 +177,7 @@ fn main() -> Result<()> {
                                 }
                             }
                             app.proc_signal_menu = None;
-                            let mut entries = proc::get_proc_list();
-                            proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
-                            app.proc_entries = entries;
-                            app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
-                            if let Some(e) = app.proc_entries.get(app.proc_cursor) {
-                                let pid = e.pid;
-                                app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
-                            }
+                            refresh_procs!(app);
                         }
                         (KeyCode::Char(c), KeyModifiers::NONE) => {
                             let sig_opt = proc::SIGNAL_ITEMS.iter()
@@ -189,14 +194,7 @@ fn main() -> Result<()> {
                                     }
                                 }
                                 app.proc_signal_menu = None;
-                                let mut entries = proc::get_proc_list();
-                                proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
-                                app.proc_entries = entries;
-                                app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
-                                if let Some(e) = app.proc_entries.get(app.proc_cursor) {
-                                    let pid = e.pid;
-                                    app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
-                                }
+                                refresh_procs!(app);
                             }
                         }
                         _ => {}
@@ -234,10 +232,7 @@ fn main() -> Result<()> {
                         app.proc_cursor = (app.proc_cursor + proc_lh).min(n.saturating_sub(1));
                     }
                     (KeyCode::Char('r'), KeyModifiers::NONE) => {
-                        let mut entries = proc::get_proc_list();
-                        proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
-                        app.proc_entries = entries;
-                        app.proc_cursor = app.proc_cursor.min(app.proc_entries.len().saturating_sub(1));
+                        refresh_procs!(app);
                     }
                     (KeyCode::Char('x'), KeyModifiers::NONE) => {
                         if let Some(entry) = app.proc_entries.get(app.proc_cursor) {
@@ -274,9 +269,7 @@ fn main() -> Result<()> {
                             app.proc_sort = next;
                             app.proc_sort_asc = next.default_asc();
                         }
-                        let mut entries = proc::get_proc_list();
-                        proc::sort_proc_entries(&mut entries, app.proc_sort, app.proc_sort_asc);
-                        app.proc_entries = entries;
+                        refresh_procs!(app);
                         app.proc_cursor = 0;
                         app.proc_offset = 0;
                     }
