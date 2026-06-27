@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-27
+
+### Added
+
+- **Process tree view** (`t` key in proc mode): toggles between flat sorted list and PPID-based process tree with `├─` / `└─` / `│  ` branch characters; cursor tracks the selected process by PID across refreshes and mode switches
+- **Process tree** `t:ツリー` / `t:Tree` entry added to proc mode menu bar
+- **PPID column** in process list: shown between PID and USER (list mode: `PID PPID USER %CPU …`; tree mode: `S PID USER CMD`)
+- **Full ps-style STAT string**: single-char state + modifiers `<` (high-prio) / `N` (low-prio) / `s` (session leader) / `l` (multi-threaded) / `+` (foreground), e.g. `Ss`, `R<`, `Rl+`
+- **Japanese/English process state description** in right header panel: `状態` now shows human-readable text (e.g. `スリープ セッションリーダー` / `Sleeping Session-leader`) derived from the full STAT string
+
+### Changed
+
+- **Process cursor color**: cursor row retains the state-based color (R=yellow / T=cyan / D=green / Z=magenta / S=white / CPU≥50%=red) with reversed-video highlight instead of always appearing white
+- **Code split**: large source files extracted into submodules per the 1500-line rule:
+  - `src/ui.rs` → dialog render functions moved to `src/ui/dialogs.rs`
+  - `src/app.rs` → file operation methods moved to `src/app/ops.rs`; test suite moved to `src/app/tests.rs`
+  - `src/main.rs` → large key handlers (`handle_git_dialog_key`, `handle_file_dialog_key`) extracted to `src/keys.rs`
+
 ## [0.2.0] - 2026-04-19
 
 ### Added

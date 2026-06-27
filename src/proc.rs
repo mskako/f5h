@@ -5,13 +5,122 @@ use anyhow::Result;
 #[derive(Clone, Debug)]
 pub struct ProcEntry {
     pub pid: u32,
+    pub ppid: u32,
     pub user: String,
     pub cpu: f32,
     pub mem: f32,
     pub vsz: u64, // KB
     pub rss: u64, // KB
-    pub stat: String,
+    pub stat: String, // e.g. "S<s", "Rl+", "Z"
     pub command: String,
+}
+
+/// プロセスツリー表示用の1行
+pub struct ProcTreeRow {
+    pub idx: usize,      // proc_entries へのインデックス
+    pub prefix: String,  // "  ├─ " / "  └─ " など
+}
+
+/// stat 文字列を日本語で説明する
+pub fn stat_to_ja(stat: &str) -> String {
+    let mut parts = Vec::new();
+    match stat.chars().next().unwrap_or(' ') {
+        'R' => parts.push("実行中"),
+        'S' => parts.push("スリープ"),
+        'D' => parts.push("I/O待ち"),
+        'Z' => parts.push("ゾンビ"),
+        'T' => parts.push("停止"),
+        't' => parts.push("トレース"),
+        'I' => parts.push("アイドル"),
+        _   => parts.push("?"),
+    }
+    for ch in stat.chars().skip(1) {
+        match ch {
+            '<' => parts.push("高優先"),
+            'N' => parts.push("低優先"),
+            'L' => parts.push("ページLock"),
+            's' => parts.push("セッションL"),
+            'l' => parts.push("マルチスレッド"),
+            '+' => parts.push("フォアグラウンド"),
+            _   => {}
+        }
+    }
+    parts.join(" ")
+}
+
+/// stat 文字列を英語で説明する
+pub fn stat_to_en(stat: &str) -> String {
+    let mut parts = Vec::new();
+    match stat.chars().next().unwrap_or(' ') {
+        'R' => parts.push("Running"),
+        'S' => parts.push("Sleeping"),
+        'D' => parts.push("I/O wait"),
+        'Z' => parts.push("Zombie"),
+        'T' => parts.push("Stopped"),
+        't' => parts.push("Traced"),
+        'I' => parts.push("Idle"),
+        _   => parts.push("?"),
+    }
+    for ch in stat.chars().skip(1) {
+        match ch {
+            '<' => parts.push("High-prio"),
+            'N' => parts.push("Low-prio"),
+            'L' => parts.push("PageLocked"),
+            's' => parts.push("Session-leader"),
+            'l' => parts.push("Multi-threaded"),
+            '+' => parts.push("Foreground"),
+            _   => {}
+        }
+    }
+    parts.join(" ")
+}
+
+/// 親→子マップを DFS してツリー行リストを生成する
+fn proc_tree_dfs(
+    idx: usize,
+    prefix: &str,
+    is_last: bool,
+    is_root: bool,
+    entries: &[ProcEntry],
+    children: &std::collections::HashMap<u32, Vec<usize>>,
+    rows: &mut Vec<ProcTreeRow>,
+) {
+    let (my_prefix, child_prefix) = if is_root {
+        (String::new(), "  ".to_string())
+    } else {
+        let conn = if is_last { "└─ " } else { "├─ " };
+        let cont = if is_last { "   " } else { "│  " };
+        (format!("{}{}", prefix, conn), format!("{}{}", prefix, cont))
+    };
+    rows.push(ProcTreeRow { idx, prefix: my_prefix });
+    let pid = entries[idx].pid;
+    if let Some(kids) = children.get(&pid) {
+        let mut sorted = kids.clone();
+        sorted.sort_by_key(|&i| entries[i].pid);
+        let n = sorted.len();
+        for (j, &ki) in sorted.iter().enumerate() {
+            proc_tree_dfs(ki, &child_prefix, j + 1 == n, false, entries, children, rows);
+        }
+    }
+}
+
+/// プロセスエントリからツリー表示行リストを生成する
+pub fn build_proc_tree(entries: &[ProcEntry]) -> Vec<ProcTreeRow> {
+    use std::collections::HashMap;
+    let pid_to_idx: HashMap<u32, usize> = entries.iter().enumerate().map(|(i, e)| (e.pid, i)).collect();
+    let mut children: HashMap<u32, Vec<usize>> = HashMap::new();
+    for (i, e) in entries.iter().enumerate() {
+        let parent = if pid_to_idx.contains_key(&e.ppid) { e.ppid } else { 0 };
+        children.entry(parent).or_default().push(i);
+    }
+    let mut roots = children.get(&0).cloned().unwrap_or_default();
+    roots.sort_by_key(|&i| entries[i].pid);
+    let mut rows = Vec::new();
+    let n = roots.len();
+    for (i, &ri) in roots.iter().enumerate() {
+        proc_tree_dfs(ri, "", i + 1 == n, true, entries, &children, &mut rows);
+    }
+    rows
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -203,13 +312,13 @@ pub fn get_proc_list() -> Vec<ProcEntry> {
             Ok(s) => s,
             Err(_) => continue,
         };
-        let (comm, state, utime, stime, starttime_ticks) = parse_stat_line(&stat_str);
+        let sf = parse_stat_line(&stat_str);
 
         let (uid, vsz_kb, rss_kb) = read_proc_status_fields(pid);
         let user = uid_to_username(uid);
 
-        let total_ticks = (utime + stime) as f64;
-        let elapsed = (uptime - starttime_ticks as f64 / clk_tck).max(1.0);
+        let total_ticks = (sf.utime + sf.stime) as f64;
+        let elapsed = (uptime - sf.starttime as f64 / clk_tck).max(1.0);
         let cpu = (total_ticks / clk_tck / elapsed * 100.0) as f32;
 
         let mem = if mem_total_kb > 0 {
@@ -218,13 +327,28 @@ pub fn get_proc_list() -> Vec<ProcEntry> {
             0.0
         };
 
-        entries.push(ProcEntry { pid, user, cpu, mem, vsz: vsz_kb, rss: rss_kb, stat: state, command: comm });
+        let stat = build_stat_string(&sf, pid);
+        entries.push(ProcEntry { pid, ppid: sf.ppid, user, cpu, mem, vsz: vsz_kb, rss: rss_kb, stat, command: sf.comm });
     }
 
     entries
 }
 
-fn parse_stat_line(s: &str) -> (String, String, u64, u64, u64) {
+struct ParsedStat {
+    comm: String,
+    state: char,
+    ppid: u32,
+    pgrp: i32,
+    session: i32,
+    tpgid: i32,
+    utime: u64,
+    stime: u64,
+    nice: i32,
+    num_threads: u32,
+    starttime: u64,
+}
+
+fn parse_stat_line(s: &str) -> ParsedStat {
     let comm_start = s.find('(').unwrap_or(0);
     let comm_end = s.rfind(')').unwrap_or(0);
     let comm = if comm_end > comm_start {
@@ -233,13 +357,33 @@ fn parse_stat_line(s: &str) -> (String, String, u64, u64, u64) {
         String::new()
     };
     let after = if comm_end + 1 < s.len() { &s[comm_end + 1..] } else { "" };
-    let fields: Vec<&str> = after.split_whitespace().collect();
-    // after ')': state(0) ppid(1) ... utime(11) stime(12) ... starttime(19)
-    let state = fields.first().unwrap_or(&"?").to_string();
-    let utime: u64 = fields.get(11).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let stime: u64 = fields.get(12).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let starttime: u64 = fields.get(19).and_then(|s| s.parse().ok()).unwrap_or(0);
-    (comm, state, utime, stime, starttime)
+    let f: Vec<&str> = after.split_whitespace().collect();
+    // after ')': state(0) ppid(1) pgrp(2) session(3) tty_nr(4) tpgid(5) flags(6)
+    //            ... utime(11) stime(12) ... priority(15) nice(16) num_threads(17) ... starttime(19)
+    ParsedStat {
+        comm,
+        state:       f.first().and_then(|s| s.chars().next()).unwrap_or('?'),
+        ppid:        f.get(1).and_then(|s| s.parse().ok()).unwrap_or(0),
+        pgrp:        f.get(2).and_then(|s| s.parse().ok()).unwrap_or(0),
+        session:     f.get(3).and_then(|s| s.parse().ok()).unwrap_or(0),
+        tpgid:       f.get(5).and_then(|s| s.parse().ok()).unwrap_or(-1),
+        utime:       f.get(11).and_then(|s| s.parse().ok()).unwrap_or(0),
+        stime:       f.get(12).and_then(|s| s.parse().ok()).unwrap_or(0),
+        nice:        f.get(16).and_then(|s| s.parse().ok()).unwrap_or(0),
+        num_threads: f.get(17).and_then(|s| s.parse().ok()).unwrap_or(1),
+        starttime:   f.get(19).and_then(|s| s.parse().ok()).unwrap_or(0),
+    }
+}
+
+fn build_stat_string(sf: &ParsedStat, pid: u32) -> String {
+    let mut s = String::new();
+    s.push(sf.state);
+    if sf.nice < 0 { s.push('<'); }
+    if sf.nice > 0 { s.push('N'); }
+    if pid as i32 == sf.session { s.push('s'); }
+    if sf.num_threads > 1 { s.push('l'); }
+    if sf.tpgid >= 0 && sf.pgrp == sf.tpgid { s.push('+'); }
+    s
 }
 
 fn read_proc_status_fields(pid: u32) -> (u32, u64, u64) {
@@ -603,6 +747,7 @@ mod tests {
         data.iter()
             .map(|&(pid, user, cpu, mem)| ProcEntry {
                 pid,
+                ppid: 0,
                 user: user.to_string(),
                 cpu,
                 mem,

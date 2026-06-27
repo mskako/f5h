@@ -5,7 +5,7 @@ A Unix TUI file manager inspired by FILMTN, a DOS-era file manager for PC-98 by 
 > 日本語版は [docs/README.ja.md](docs/README.ja.md) をご覧ください。
 
 ```
-e:Edit  x:Run  ::Func  b:Git  t:Tree  s:Sort  /:Search  ~:Home  J:Jump  c:Copy  m:Move  d:Del  a:Perm  q:Quit
+e:Edit  x:Run  ::Func  b:Git  Tab:Tree  s:Sort  /:Search  ~:Home  J:Jump  K:MkDir  c:Copy  m:Move  d:Del  a:Perm  q:Quit
 ╭─ Volume Info ───────────────── Path ─── 12:34:56 ─── f5h v0.2.0 ─╮
 │ /dev/sda1 (ext4)            │ /home/user/src                         main ↑2↓1 │
  Free:          897Gi ├─ File Info ──────────────────────────────────────────────────┤
@@ -34,8 +34,8 @@ e:Edit  x:Run  ::Func  b:Git  t:Tree  s:Sort  /:Search  ~:Home  J:Jump  c:Copy  
 - **Git integration** (`b` key): add, commit, fetch, push, pull (rebase), merge, switch branch, stash
   - Branch name with ahead/behind count (e.g. `main ↑2↓1`) in the path row
   - Per-file git status in the file list prefix column (M / A / ? / D)
-- **Incremental filename search** (`/`): partial match with regex support; `n`/`N` for next/prev; highlights persist after `Enter`
-- **Func dialog** (`:`): command palette with filtered list, Tab completion — `:mv`, `:proc`, `:q`
+- **Incremental filename search** (`/`): partial match with regex support; `n`/`N` for next/prev; highlights persist after `Enter`; cleared automatically on directory change
+- **Func dialog** (`:`): command palette with filtered list, Tab completion — `:mv`, `:mkdir`, `:proc`, `:q`
 - **Process viewer** (`:proc`): top/ps-like process list with signal sending and FD inspection (see below)
 - **F1 help overlay**: full key reference
 - File coloring from `LS_COLORS` (Linux) or `LSCOLORS` (macOS)
@@ -43,6 +43,7 @@ e:Edit  x:Run  ::Func  b:Git  t:Tree  s:Sort  /:Search  ~:Home  J:Jump  c:Copy  
 - Extension-to-program associations (open PDFs with Evince, images with feh, etc.)
 - Fully configurable UI colors and keybindings via TOML
 - Terminal tab title set to `🍥 f5h` on launch
+- Root user indicator: red/black blinking stripe in bottom border when running as root
 
 ## Requirements
 
@@ -103,7 +104,7 @@ All bindings (except arrow keys) are remappable in `config.toml`.
 | `n` | Jump to next match |
 | `N` | Jump to previous match |
 
-Type to search (partial match, case-insensitive, regex supported). `Enter` confirms and keeps highlights active. `Esc` cancels and returns to the original position. After confirming, `n`/`N` continue navigating matches. `Esc` in normal mode clears the highlights.
+Type to search (partial match, case-insensitive, regex supported). `Enter` confirms and keeps highlights active. `Esc` cancels and returns to the original position. After confirming, `n`/`N` continue navigating matches. `Esc` in normal mode clears the highlights. Navigating to a different directory clears the search automatically.
 
 ### Sort Dialog (`s`)
 
@@ -126,6 +127,7 @@ Press `:` to open the Func dialog — a command palette with a filtered list and
 | Command | Action |
 |---|---|
 | `:mv <name>` | Rename cursor file |
+| `:mkdir <name>` | Create directory |
 | `:proc` | Open process viewer |
 | `:q` / `:quit` | Quit |
 | `:help` | Show all commands |
@@ -155,16 +157,37 @@ Remote operations (fetch / push / pull) prompt for an SSH passphrase. Leave blan
 
 Open with `:proc` in the func dialog. Shows a top/ps-like process list with a 7-row system-info header.
 
+```
+t:Tree  x:Signal  f/RET:FD  r:Refresh  s:Sort  q/Esc:File
+╭─ Process ─── 123 ──────────────────────────── 12:34:56 ─── f5h v0.2.0 ─╮
+│ Load 0.12 0.08 0.05       │ PID:  1234  PPID:   1  TTY:pts/0            │
+│ CPU  8 cores              │  User:alice       State:Sleeping High-prio   │
+│ Mem  4.2Gi/15.5Gi  27%   │ %CPU: 2.3  %MEM: 1.1  VSZ:  45Mi  RSS: 12Mi │
+│ Swap 0B/2.0Gi     0%     │ CMD: cargo                                    │
+│ Up   2d 03:12:45          │ args: cargo run --release                    │
+│                           │ Started: 2026-04-18 09:12  Elapsed: 00:05:21 │
+│                           │ CWD: /home/user/project  Threads:4  FDs:12   │
+├───────────────────────────┴────────────────────────────────────────────  ┤
+│   PID   PPID USER      %CPU  %MEM     VSZ    RSS STAT COMMAND            │
+│  1234      1 alice      2.3   1.1   45Mi   12Mi Ss   cargo               │
+╰── t:Tree  x:Signal  f/RET:FD  r:Refresh  s:Sort  q/Esc:File ───────────╯
+```
+
 **Header panels:**
 
 | Left panel | Right panel |
 |---|---|
-| Load averages (1/5/15 min) | PID, PPID, TTY, User, Stat |
-| CPU core count | %CPU, %MEM, VSZ, RSS |
-| Memory used/total/% | Command name |
-| Swap used/total | Full cmdline (args) |
-| Uptime | Start time, elapsed time |
+| Load averages (1/5/15 min) | PID, PPID, TTY, User |
+| CPU core count | State (human-readable: e.g. "Sleeping High-prio") |
+| Memory used/total/% | %CPU, %MEM, VSZ, RSS |
+| Swap used/total | Command name |
+| Uptime | Full cmdline (args) |
+| | Start time, elapsed time |
 | | CWD, thread count, open FDs |
+
+**Process list columns:** PID / PPID / USER / %CPU / %MEM / VSZ / RSS / STAT / COMMAND
+
+`STAT` shows the full ps-style string: `S` (sleeping), `R` (running), `D` (disk sleep), `Z` (zombie), `T` (stopped) plus modifiers: `<` high-priority, `N` low-priority, `s` session leader, `l` multi-threaded, `+` foreground.
 
 **Process list keys:**
 
@@ -173,6 +196,7 @@ Open with `:proc` in the func dialog. Shows a top/ps-like process list with a 7-
 | `j` / `k` / `↑` / `↓` | Move cursor |
 | `g` / `G` | First / last entry |
 | `PageUp` / `PageDown` | Scroll page |
+| `t` | Toggle process tree view |
 | `s` | Cycle sort mode (CPU → MEM → PID → USER → CMD); same key toggles asc/desc |
 | `x` | Open signal menu for selected process |
 | `f` / `Enter` | Open FD list for selected process |
@@ -180,16 +204,20 @@ Open with `:proc` in the func dialog. Shows a top/ps-like process list with a 7-
 | `F1` | Help overlay |
 | `q` / `Esc` | Return to file manager |
 
-**Row colors** (CPU ≥ 50% overrides):
+**Row colors** (CPU ≥ 50% overrides state color):
 
 | STAT | Color |
 |---|---|
 | `R` (running) | Yellow |
-| `T` (stopped) | Cyan |
+| `T` / `t` (stopped / traced) | Cyan |
 | `D` (disk sleep) | Green |
 | `Z` (zombie) | Magenta |
 | `S`, `I`, others | White |
-| CPU ≥ 50% | Red (overrides STAT color) |
+| CPU ≥ 50% | Red |
+
+The cursor row applies the same color with reversed video, so the state remains visible.
+
+**Process tree view** (`t`): toggles between the flat sorted list and a PPID-based process tree. Processes are displayed with `├─` / `└─` / `│  ` branch characters. The cursor tracks the selected process by PID across refreshes and mode switches.
 
 **Signal menu** (`x`): use `j`/`k`/`Enter` or press the letter key directly.
 
@@ -202,7 +230,7 @@ Open with `:proc` in the func dialog. Shows a top/ps-like process list with a 7-
 | `c` | SIGCONT (18) — continue |
 | `s` | SIGSTOP (20) — stop |
 
-**FD list** (`f` / `Enter`): scrollable list of open file descriptors. Columns: fd number, type tag (stdin / stdout / stderr / file / socket / pipe / anon), target path. `r` refreshes; `F1` help; `Esc`/`q` returns to process list.
+**FD list** (`f` / `Enter`): scrollable list of open file descriptors. Columns: fd number, type tag (stdin / stdout / stderr / file / socket / pipe / anon), target path. `r` refreshes; `F1` help; `Esc`/`q` returns to process list. If `/proc/{pid}/fd` is not readable (permission denied), an error message is shown in red.
 
 The process list auto-refreshes every 500 ms (paused while the FD list is open). All process data is read directly from `/proc` — no `ps` subprocess is spawned. TTY is decoded from the kernel tty_nr field (`pts/N`, `ttyN`, `ttySN`).
 
