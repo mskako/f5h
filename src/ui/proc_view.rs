@@ -1,5 +1,5 @@
 use super::*;
-use crate::proc::{ProcEntry, SIGNAL_ITEMS, get_sys_info, stat_to_en, stat_to_ja};
+use crate::proc::{ProcEntry, RightPanel, SIGNAL_ITEMS, get_sys_info, stat_to_en, stat_to_ja};
 
 /// proc モードのメインビュー（7行ヘッダー + プロセスリスト）
 pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
@@ -230,6 +230,18 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
     blit(buf, sx1 + 1,             sep_y, &"─".repeat(rw), rw, cyan);
     blit_ch(buf, mx + mw as u16 - 1, sep_y, '┤', cyan);
 
+    // ── 右パネルの分割計算 ───────────────────────────────────────────────
+    let has_panel = app.right_panel != RightPanel::None;
+    let panel_visible = has_panel && iw >= 100;
+    let (list_iw, panel_w, sx2): (usize, usize, u16) = if panel_visible {
+        let liw = iw * 3 / 5;
+        let pw  = iw - liw - 1;
+        let s2  = mx + 1 + liw as u16;
+        (liw, pw, s2)
+    } else {
+        (iw, 0, 0)
+    };
+
     // ── カラムヘッダー (my + HEADER_ROWS + 1) ─────────────────────────────
     let col_hdr_y = my + HEADER_ROWS + 1;
     {
@@ -247,14 +259,26 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
                 "%CPU", "%MEM", "VSZ", "RSS", "STAT", cmd_hdr
             )
         };
-        blit(buf, mx + 1, col_hdr_y, &padr(&hdr, iw), iw, lc);
-        let right_ind = if app.proc_tree {
+        // 右インジケーター（パネルが開いているとき付加）
+        let panel_tag = if has_panel && !panel_visible {
+            match app.right_panel {
+                RightPanel::Fd => " [FD]",
+                RightPanel::Threads => " [THR]",
+                RightPanel::None => "",
+            }
+        } else { "" };
+        let base_ind = if app.proc_tree {
             if app.lang_en { "[T:List]".to_string() } else { "[T:一覧]".to_string() }
         } else {
             format!("[{}{}]", sort_lbl, sort_arrow)
         };
-        let si_x = mx + mw as u16 - 1 - sw(&right_ind) as u16 - 1;
+        let right_ind = format!("{}{}", base_ind, panel_tag);
+        blit(buf, mx + 1, col_hdr_y, &padr(&hdr, list_iw), list_iw, lc);
+        let si_x = mx + 1 + list_iw as u16 - 1 - sw(&right_ind) as u16;
         blit(buf, si_x, col_hdr_y, &right_ind, sw(&right_ind), yellow);
+        if panel_visible {
+            blit_ch(buf, sx2, col_hdr_y, '│', cyan);
+        }
         blit_ch(buf, mx + mw as u16 - 1, col_hdr_y, '│', cyan);
     }
 
@@ -276,7 +300,7 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
         blit_ch(buf, mx, screen_y, '│', cyan);
         let entry_idx = offset + row_i;
         if entry_idx >= n {
-            blit(buf, mx + 1, screen_y, &" ".repeat(iw), iw, Style::default());
+            blit(buf, mx + 1, screen_y, &" ".repeat(list_iw), list_iw, Style::default());
         } else {
             let is_cur = entry_idx == app.proc_cursor;
             let e: &ProcEntry = if app.proc_tree {
@@ -285,11 +309,20 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
                 &app.proc_entries[entry_idx]
             };
             let base_style = proc_entry_style(e);
-            let style = if is_cur { base_style.add_modifier(Modifier::REVERSED) } else { base_style };
+            let cursor_style = if is_cur {
+                if app.right_panel_focus {
+                    // 右フォーカス中は DarkGray でカーソル位置を示す
+                    base_style.bg(Color::DarkGray)
+                } else {
+                    base_style.add_modifier(Modifier::REVERSED)
+                }
+            } else {
+                base_style
+            };
             let line = if app.proc_tree {
                 let prefix = &app.proc_tree_rows[entry_idx].prefix;
                 let prefix_w = sw(prefix);
-                let cmd_avail = iw.saturating_sub(prefix_w + 2 + 7 + 9);
+                let cmd_avail = list_iw.saturating_sub(prefix_w + 2 + 7 + 9);
                 format!(
                     "{}{} {:>6} {:<8}  {}",
                     prefix,
@@ -300,7 +333,7 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
             } else {
                 let (vsz_n, vsz_u) = fmt_cpt_parts(e.vsz * 1024);
                 let (rss_n, rss_u) = fmt_cpt_parts(e.rss * 1024);
-                let cmd_avail = iw.saturating_sub(57);
+                let cmd_avail = list_iw.saturating_sub(57);
                 format!(
                     " {:>6} {:>6} {:<8} {:>5.1} {:>5.1} {:>7} {:>6} {:<4} {}",
                     e.pid, e.ppid, trunc(&e.user, 8), e.cpu, e.mem,
@@ -309,7 +342,10 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
                     trunc(&e.stat, 4), trunc(&e.command, cmd_avail),
                 )
             };
-            blit(buf, mx + 1, screen_y, &padr(&line, iw), iw, style);
+            blit(buf, mx + 1, screen_y, &padr(&line, list_iw), list_iw, cursor_style);
+        }
+        if panel_visible {
+            blit_ch(buf, sx2, screen_y, '│', cyan);
         }
         blit_ch(buf, mx + mw as u16 - 1, screen_y, '│', cyan);
     }
@@ -318,8 +354,25 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
     for row_i in (list_h + list_start_y as usize)..(my as usize + mh as usize - 1) {
         let screen_y = row_i as u16;
         blit_ch(buf, mx, screen_y, '│', cyan);
-        blit(buf, mx + 1, screen_y, &" ".repeat(iw), iw, Style::default());
+        blit(buf, mx + 1, screen_y, &" ".repeat(list_iw), list_iw, Style::default());
+        if panel_visible {
+            blit_ch(buf, sx2, screen_y, '│', cyan);
+            blit(buf, sx2 + 1, screen_y, &" ".repeat(panel_w), panel_w, Style::default());
+        }
         blit_ch(buf, mx + mw as u16 - 1, screen_y, '│', cyan);
+    }
+
+    // ── 右パネルを描画 ───────────────────────────────────────────────────
+    if panel_visible {
+        match app.right_panel {
+            RightPanel::Fd => render_fd_panel(
+                buf, sx2 + 1, col_hdr_y, list_start_y, panel_w, list_h, app,
+            ),
+            RightPanel::Threads => render_thread_panel(
+                buf, sx2 + 1, col_hdr_y, list_start_y, panel_w, list_h, app,
+            ),
+            RightPanel::None => {}
+        }
     }
 
     // ── 下枠 ─────────────────────────────────────────────────────────────
@@ -331,73 +384,43 @@ pub(super) fn render_proc_view(frame: &mut Frame, main_area: Rect, app: &App) {
         let status = format!(" {}  {:>3}/{:<3} {}", f1_lbl, page, total_pages, app.labels.page_unit);
         let st_w = sw(&status);
         blit_ch(buf, mx, by, '╰', cyan);
-        render_bottom_fill(buf, mx, by, mw, &status, st_w, rev, app.is_root);
+        if panel_visible {
+            // 縦仕切りの下端: ┴
+            let fill_left = (sx2 - mx - 1) as usize;
+            blit(buf, mx + 1, by, &"─".repeat(fill_left), fill_left, cyan);
+            blit_ch(buf, sx2, by, '┴', cyan);
+            let fill_right = (mw - 2).saturating_sub(fill_left + 1).saturating_sub(st_w);
+            blit(buf, sx2 + 1, by, &"─".repeat(fill_right), fill_right, cyan);
+            blit(buf, sx2 + 1 + fill_right as u16, by, &status, st_w, rev);
+        } else {
+            render_bottom_fill(buf, mx, by, mw, &status, st_w, rev, app.is_root);
+        }
         blit_ch(buf, mx + mw as u16 - 1, by, '╯', cyan);
     }
 }
 
-/// fd 一覧ビュー
-pub(super) fn render_fd_view(frame: &mut Frame, main_area: Rect, app: &App) {
-    let mw = main_area.width as usize;
-    let mh = main_area.height;
-    let mx = main_area.x;
-    let my = main_area.y;
-    if mw < 30 || mh < 6 { return; }
-
-    let iw = mw - 2;
-    let buf = frame.buffer_mut();
-    let cyan  = app.ui_colors.border;
-    let yellow = app.ui_colors.title;
+/// FD パネル（右半分）を描画する
+fn render_fd_panel(
+    buf: &mut Buffer,
+    x: u16,
+    hdr_y: u16,
+    content_y: u16,
+    w: usize,
+    list_h: usize,
+    app: &App,
+) {
     let lc    = app.ui_colors.label;
     let white = Style::default().fg(Color::White);
     let rev   = Style::default().add_modifier(Modifier::REVERSED);
+    let red   = Style::default().fg(Color::Red);
 
-    // ── 上枠 ──────────────────────────────────────────────────────────────
-    {
-        let title = format!(" FD: {} (PID {}) ", app.fd_proc_name, app.fd_pid);
-        let n_fds = app.fd_entries.len();
-        let count_unit = if app.lang_en { "fds" } else { "個" };
-        let count_s = format!(" {} {} ", n_fds, count_unit);
-        let clock_s = format!(" {} ", crate::fs_utils::now_str());
-        let ver_pre = "─── ";
-        let ver_lbl = concat!("f5h v", env!("CARGO_PKG_VERSION"));
-        let ver_suf = " ─";
-        let fixed = 1 + sw(&title) + 4 + sw(&count_s)
-            + sw(&clock_s) + sw(ver_pre) + sw(ver_lbl) + sw(ver_suf) + 1;
-        let mid_fill_n = mw.saturating_sub(fixed);
+    // ヘッダー行
+    let pid_s = format!("FD:{}", app.fd_pid);
+    let type_hdr = if app.lang_en { "TYPE  " } else { "種別  " };
+    let hdr = format!(" {:<5} {} INFO", padr(&pid_s, 5), type_hdr);
+    blit(buf, x, hdr_y, &padr(&hdr, w), w, lc);
 
-        let mut x = mx;
-        blit_ch(buf, x, my, '╭', cyan); x += 1;
-        blit(buf, x, my, &title, sw(&title), yellow); x += sw(&title) as u16;
-        blit(buf, x, my, "─── ", 4, cyan); x += 4;
-        blit(buf, x, my, &count_s, sw(&count_s), lc); x += sw(&count_s) as u16;
-        blit(buf, x, my, &"─".repeat(mid_fill_n), mid_fill_n, cyan); x += mid_fill_n as u16;
-        blit(buf, x, my, &clock_s, sw(&clock_s), app.ui_colors.clock); x += sw(&clock_s) as u16;
-        blit(buf, x, my, ver_pre, sw(ver_pre), cyan); x += sw(ver_pre) as u16;
-        blit(buf, x, my, ver_lbl, sw(ver_lbl), yellow); x += sw(ver_lbl) as u16;
-        blit(buf, x, my, ver_suf, sw(ver_suf), cyan); x += sw(ver_suf) as u16;
-        blit_ch(buf, x, my, '╮', cyan);
-    }
-
-    // ── カラムヘッダー ────────────────────────────────────────────────────
-    {
-        blit_ch(buf, mx, my + 1, '│', cyan);
-        let type_hdr   = if app.lang_en { "TYPE" } else { "種別" };
-        let target_hdr = if app.lang_en { "TARGET" } else { "対象" };
-        let hdr = format!(" {:>4}  {}  {}", "FD", padr(type_hdr, 6), target_hdr);
-        blit(buf, mx + 1, my + 1, &padr(&hdr, iw), iw, lc);
-        blit_ch(buf, mx + mw as u16 - 1, my + 1, '│', cyan);
-    }
-
-    // ── セパレータ ────────────────────────────────────────────────────────
-    blit_ch(buf, mx, my + 2, '├', cyan);
-    blit(buf, mx + 1, my + 2, &"─".repeat(iw), iw, cyan);
-    blit_ch(buf, mx + mw as u16 - 1, my + 2, '┤', cyan);
-
-    // ── fd 一覧 ───────────────────────────────────────────────────────────
-    let list_start_y = my + 3;
-    let list_h = (my + mh - 1).saturating_sub(list_start_y) as usize;
-    let red_style = Style::default().fg(Color::Red);
+    // コンテンツ
     let n = app.fd_entries.len();
     let offset = if app.fd_cursor < app.fd_offset {
         app.fd_cursor
@@ -408,55 +431,131 @@ pub(super) fn render_fd_view(frame: &mut Frame, main_area: Rect, app: &App) {
     };
 
     if let Some(ref err_msg) = app.fd_error {
-        // パーミッションエラー等を表示
         for row_i in 0..list_h {
-            let screen_y = list_start_y + row_i as u16;
-            if screen_y >= my + mh - 1 { break; }
-            blit_ch(buf, mx, screen_y, '│', cyan);
+            let screen_y = content_y + row_i as u16;
             if row_i == list_h / 2 {
                 let msg = format!(" ⚠ {}", err_msg);
-                blit(buf, mx + 1, screen_y, &padr(&msg, iw), iw, red_style);
+                blit(buf, x, screen_y, &padr(&msg, w), w, red);
             } else {
-                blit(buf, mx + 1, screen_y, &" ".repeat(iw), iw, Style::default());
+                blit(buf, x, screen_y, &" ".repeat(w), w, Style::default());
             }
-            blit_ch(buf, mx + mw as u16 - 1, screen_y, '│', cyan);
         }
-    } else {
-        for row_i in 0..list_h {
-            let screen_y = list_start_y + row_i as u16;
-            if screen_y >= my + mh - 1 { break; }
-            blit_ch(buf, mx, screen_y, '│', cyan);
-            let entry_idx = offset + row_i;
-            if entry_idx >= n {
-                blit(buf, mx + 1, screen_y, &" ".repeat(iw), iw, Style::default());
-            } else {
-                let e = &app.fd_entries[entry_idx];
-                let is_cur = entry_idx == app.fd_cursor;
-                let target_avail = iw.saturating_sub(14);
-                let line = format!(
-                    " {:>4}  {:<6}  {}",
-                    e.fd, e.fd_type.tag(), trunc(&e.target, target_avail)
-                );
-                let style = if is_cur { rev } else { white };
-                blit(buf, mx + 1, screen_y, &padr(&line, iw), iw, style);
-            }
-            blit_ch(buf, mx + mw as u16 - 1, screen_y, '│', cyan);
-        }
+        return;
     }
 
-    // ── 下枠 ─────────────────────────────────────────────────────────────
-    {
-        let by = my + mh - 1;
-        let page = if list_h > 0 { offset / list_h + 1 } else { 1 };
-        let total = if list_h > 0 { (n + list_h - 1).max(1) / list_h } else { 1 };
-        let f1_lbl = if app.lang_en { "F1:Help" } else { "F1:ヘルプ" };
-        let status = format!(" {}  {:>3}/{:<3} {}", f1_lbl, page, total, app.labels.page_unit);
-        let st_w = sw(&status);
-        blit_ch(buf, mx, by, '╰', cyan);
-        render_bottom_fill(buf, mx, by, mw, &status, st_w, rev, app.is_root);
-        blit_ch(buf, mx + mw as u16 - 1, by, '╯', cyan);
+    for row_i in 0..list_h {
+        let screen_y = content_y + row_i as u16;
+        let entry_idx = offset + row_i;
+        if entry_idx >= n {
+            blit(buf, x, screen_y, &" ".repeat(w), w, Style::default());
+        } else {
+            let e = &app.fd_entries[entry_idx];
+            let is_cur = entry_idx == app.fd_cursor && app.right_panel_focus;
+            let style = if is_cur { rev } else { white };
+            // type tag 4 chars (trunc of fd_type.tag())
+            let type_tag = trunc(e.fd_type.tag().trim(), 4);
+            let info = if !e.proto.is_empty() {
+                // ソケット: proto + local→remote + state (省略形)
+                let state_abbr = match e.sock_state.as_str() {
+                    "ESTABLISHED" => "EST",
+                    "LISTEN"      => "LSN",
+                    "TIME_WAIT"   => "TW",
+                    "CLOSE_WAIT"  => "CW",
+                    "SYN_SENT"    => "SYS",
+                    "SYN_RECV"    => "SYR",
+                    "CLOSING"     => "CLG",
+                    s => s,
+                };
+                let proto_s = format!("{:<5}", e.proto);
+                if e.remote_addr.is_empty() {
+                    format!("{} {}  {}", proto_s, e.local_addr, state_abbr)
+                } else {
+                    format!("{} {}→{} {}", proto_s, e.local_addr, e.remote_addr, state_abbr)
+                }
+            } else if e.fd_type == crate::proc::FdType::Pipe || e.fd_type == crate::proc::FdType::Anon {
+                e.target.clone()
+            } else {
+                // ファイル: パスのみ
+                e.target.clone()
+            };
+            let info_avail = w.saturating_sub(9);
+            let line = format!(" {:>3}  {:<4} {}", e.fd, type_tag, trunc(&info, info_avail));
+            blit(buf, x, screen_y, &padr(&line, w), w, style);
+        }
     }
 }
+
+/// スレッドパネル（右半分）を描画する
+fn render_thread_panel(
+    buf: &mut Buffer,
+    x: u16,
+    hdr_y: u16,
+    content_y: u16,
+    w: usize,
+    list_h: usize,
+    app: &App,
+) {
+    use crate::proc::ThreadEntry;
+    let lc  = app.ui_colors.label;
+    let red = Style::default().fg(Color::Red);
+
+    // ヘッダー行
+    let pid_s = format!("PID:{}", app.thread_pid);
+    let hdr = format!(" {:<7} ST TICKS  NAME", padr(&pid_s, 7));
+    blit(buf, x, hdr_y, &padr(&hdr, w), w, lc);
+
+    // コンテンツ
+    let n = app.thread_entries.len();
+    let offset = if app.thread_cursor < app.thread_offset {
+        app.thread_cursor
+    } else if n > 0 && app.thread_cursor >= app.thread_offset + list_h {
+        app.thread_cursor + 1 - list_h
+    } else {
+        app.thread_offset
+    };
+
+    if let Some(ref err_msg) = app.thread_error {
+        for row_i in 0..list_h {
+            let screen_y = content_y + row_i as u16;
+            if row_i == list_h / 2 {
+                let msg = format!(" ⚠ {}", err_msg);
+                blit(buf, x, screen_y, &padr(&msg, w), w, red);
+            } else {
+                blit(buf, x, screen_y, &" ".repeat(w), w, Style::default());
+            }
+        }
+        return;
+    }
+
+    for row_i in 0..list_h {
+        let screen_y = content_y + row_i as u16;
+        let entry_idx = offset + row_i;
+        if entry_idx >= n {
+            blit(buf, x, screen_y, &" ".repeat(w), w, Style::default());
+        } else {
+            let e: &ThreadEntry = &app.thread_entries[entry_idx];
+            let is_cur = entry_idx == app.thread_cursor && app.right_panel_focus;
+            // スレッド状態に基づく色
+            let base_style = match e.state {
+                'R' => Style::default().fg(Color::Yellow),
+                'T' | 't' => Style::default().fg(Color::Cyan),
+                'D' => Style::default().fg(Color::Green),
+                'Z' => Style::default().fg(Color::Magenta),
+                _   => Style::default().fg(Color::White),
+            };
+            let style = if is_cur { base_style.add_modifier(Modifier::REVERSED) } else { base_style };
+            let name_avail = w.saturating_sub(22);
+            let line = format!(
+                " {:>6} {}  {:>8}  {}",
+                e.tid, e.state,
+                e.cpu_ticks,
+                trunc(&e.name, name_avail),
+            );
+            blit(buf, x, screen_y, &padr(&line, w), w, style);
+        }
+    }
+}
+
 
 /// プロセス状態に応じたベーススタイル（カーソル時は REVERSED を追加して使う）
 fn proc_entry_style(e: &ProcEntry) -> Style {
@@ -546,13 +645,15 @@ pub(super) fn render_proc_help_overlay(frame: &mut Frame, app: &App) {
         ("s",         "ソート切替",         "Cycle sort mode"),
         ("t",         "ツリー表示切替",     "Toggle tree view"),
         ("x",         "シグナル送信メニュー", "Signal menu"),
-        ("f/Enter",   "FD一覧を開く",      "Open FD list"),
+        ("f/Enter",   "FD パネル開閉",      "Toggle FD panel"),
+        ("T",         "スレッドパネル開閉", "Toggle thread panel"),
+        ("Tab",       "パネルへフォーカス", "Focus right panel"),
         ("r",         "プロセス一覧を更新", "Refresh list"),
-        ("q/Esc",     "ファイルモードへ",   "Return to file mode"),
-        ("", "── FD一覧 ──", "── FD List ──"),
-        ("j/k",       "上/下に移動",       "Move up/down"),
-        ("r",         "FD一覧を更新",      "Refresh FD list"),
-        ("q/Esc",     "プロセス一覧へ",    "Return to proc list"),
+        ("q/Esc",     "パネル閉/ファイルへ", "Close panel/File mode"),
+        ("", "── パネル操作（Tab で移動後）──", "── Panel (after Tab) ──"),
+        ("j/k",       "上/下にスクロール",  "Scroll up/down"),
+        ("r",         "パネル更新",         "Reload panel"),
+        ("Tab/Esc/q", "プロセスリストへ戻る", "Back to proc list"),
         ("", "── シグナルメニュー ──", "── Signal Menu ──"),
         ("h",         "SIGHUP (1)  再起動/リロード", "SIGHUP (1)  reload"),
         ("i",         "SIGINT (2)  割り込み",        "SIGINT (2)  interrupt"),

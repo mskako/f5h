@@ -173,12 +173,8 @@ pub fn ui(frame: &mut Frame, app: &App) {
     render_menu(frame, menu_area, app);
 
     if app.proc_mode {
-        if app.fd_mode {
-            render_fd_view(frame, main_area, app);
-        } else {
-            render_proc_view(frame, main_area, app);
-            render_proc_signal_menu(frame, app);
-        }
+        render_proc_view(frame, main_area, app);
+        render_proc_signal_menu(frame, app);
         render_error_msg(frame, app);
         render_success_msg(frame, app);
         render_help_overlay(frame, app);
@@ -316,32 +312,67 @@ fn render_menu(frame: &mut Frame, area: Rect, app: &App) {
     let key_style = Style::default().add_modifier(Modifier::REVERSED);
     let text_style = Style::default().fg(Color::Cyan);
 
-    let spans: Vec<Span> = if app.fd_mode {
-        static FD_MENU: &[(&str, &str)] = &[
+    use crate::proc::RightPanel;
+    let spans: Vec<Span> = if app.proc_mode && app.right_panel_focus {
+        // 右パネルフォーカス中
+        static PANEL_MENU: &[(&str, &str)] = &[
+            ("j/k", "スクロール "),
+            ("g/G", "先頭/末尾 "),
+            ("Tab/Esc", "戻る "),
             ("r", "更新 "),
-            ("q/Esc", "プロセス "),
+            ("q", "戻る "),
         ];
-        static FD_MENU_EN: &[(&str, &str)] = &[
-            ("r", "Refresh "),
-            ("q/Esc", "Proc "),
+        static PANEL_MENU_EN: &[(&str, &str)] = &[
+            ("j/k", "Scroll "),
+            ("g/G", "Top/Bot "),
+            ("Tab/Esc", "Back "),
+            ("r", "Reload "),
+            ("q", "Back "),
         ];
-        let items = if app.lang_en { FD_MENU_EN } else { FD_MENU };
+        let items = if app.lang_en { PANEL_MENU_EN } else { PANEL_MENU };
+        items.iter().flat_map(|(k, v)| {
+            vec![Span::styled(*k, key_style), Span::styled(format!(":{} ", v), text_style)]
+        }).collect()
+    } else if app.proc_mode && app.right_panel != RightPanel::None {
+        // パネル開・左フォーカス
+        static PROC_PANEL_OPEN_MENU: &[(&str, &str)] = &[
+            ("t", "ツリー "),
+            ("T", "スレッド "),
+            ("f", "FD "),
+            ("Tab", "パネル移動 "),
+            ("x", "シグナル "),
+            ("s", "ソート "),
+            ("q/Esc", "閉じる "),
+        ];
+        static PROC_PANEL_OPEN_MENU_EN: &[(&str, &str)] = &[
+            ("t", "Tree "),
+            ("T", "Threads "),
+            ("f", "FD "),
+            ("Tab", "Panel "),
+            ("x", "Kill "),
+            ("s", "Sort "),
+            ("q/Esc", "Close "),
+        ];
+        let items = if app.lang_en { PROC_PANEL_OPEN_MENU_EN } else { PROC_PANEL_OPEN_MENU };
         items.iter().flat_map(|(k, v)| {
             vec![Span::styled(*k, key_style), Span::styled(format!(":{} ", v), text_style)]
         }).collect()
     } else if app.proc_mode {
+        // パネルなし
         static PROC_MENU: &[(&str, &str)] = &[
             ("t", "ツリー "),
+            ("T", "スレッド "),
+            ("f/RET", "FD "),
             ("x", "シグナル "),
-            ("f/RET", "FD一覧 "),
             ("r", "更新 "),
             ("s", "ソート "),
             ("q/Esc", "ファイル "),
         ];
         static PROC_MENU_EN: &[(&str, &str)] = &[
             ("t", "Tree "),
-            ("x", "Kill "),
+            ("T", "Threads "),
             ("f/RET", "FD "),
+            ("x", "Kill "),
             ("r", "Refresh "),
             ("s", "Sort "),
             ("q/Esc", "File "),

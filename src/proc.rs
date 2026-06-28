@@ -123,6 +123,14 @@ pub fn build_proc_tree(entries: &[ProcEntry]) -> Vec<ProcTreeRow> {
     rows
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum RightPanel {
+    #[default]
+    None,
+    Fd,
+    Threads,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProcSortMode {
     Cpu,
@@ -192,6 +200,15 @@ pub struct ProcSignalMenu {
     pub proc_name: String,
 }
 
+/// スレッドエントリ（/proc/{pid}/task/{tid} から収集）
+#[derive(Clone, Debug)]
+pub struct ThreadEntry {
+    pub tid: u32,
+    pub name: String,
+    pub state: char,
+    pub cpu_ticks: u64, // utime + stime
+}
+
 /// シグナル一覧: (signal番号, 直接入力キー, 名前表示, 説明)
 pub const SIGNAL_ITEMS: &[(i32, char, &str, &str)] = &[
     (1,  'h', "SIGHUP  ( 1)", "reload / restart"),
@@ -236,6 +253,10 @@ pub struct FdEntry {
     pub fd: u32,
     pub fd_type: FdType,
     pub target: String,
+    pub proto: String,        // "TCP" / "TCP6" / "UDP" / "UDP6" / "UNIX" or ""
+    pub local_addr: String,   // "127.0.0.1:80" or ""
+    pub remote_addr: String,  // "10.0.0.1:443" or ""
+    pub sock_state: String,   // "ESTABLISHED" / "LISTEN" / ... or ""
 }
 
 pub fn get_fd_list(pid: u32) -> Result<Vec<FdEntry>, String> {
@@ -247,6 +268,7 @@ pub fn get_fd_list(pid: u32) -> Result<Vec<FdEntry>, String> {
             format!("Cannot read /proc/{}/fd: {}", pid, e)
         }
     })?;
+    let sock_map = build_socket_map(pid);
     let mut entries = Vec::new();
     for entry in dir.flatten() {
         let name = entry.file_name().to_string_lossy().to_string();
@@ -258,9 +280,180 @@ pub fn get_fd_list(pid: u32) -> Result<Vec<FdEntry>, String> {
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_else(|_| "?".to_string());
         let fd_type = classify_fd(fd, &target);
-        entries.push(FdEntry { fd, fd_type, target });
+        let (proto, local_addr, remote_addr, sock_state) =
+            if fd_type == FdType::Socket {
+                // "socket:[12345]" → extract inode number
+                let inode = target
+                    .trim_start_matches("socket:[")
+                    .trim_end_matches(']')
+                    .parse::<u64>()
+                    .unwrap_or(0);
+                if let Some(r) = sock_map.get(&inode) {
+                    (r.proto.to_string(), r.local.clone(), r.remote.clone(), r.state.clone())
+                } else {
+                    (String::new(), String::new(), String::new(), String::new())
+                }
+            } else {
+                (String::new(), String::new(), String::new(), String::new())
+            };
+        entries.push(FdEntry { fd, fd_type, target, proto, local_addr, remote_addr, sock_state });
     }
     entries.sort_by_key(|e| e.fd);
+    Ok(entries)
+}
+
+struct SocketRow {
+    proto: &'static str,
+    local: String,
+    remote: String,
+    state: String,
+}
+
+fn build_socket_map(pid: u32) -> std::collections::HashMap<u64, SocketRow> {
+    let mut map = std::collections::HashMap::new();
+    // Try /proc/{pid}/net/ first (correct network namespace), fall back to /proc/net/
+    let net_prefix = if std::path::Path::new(&format!("/proc/{}/net", pid)).exists() {
+        format!("/proc/{}/net", pid)
+    } else {
+        "/proc/net".to_string()
+    };
+    for (file, proto, is_v6) in &[
+        ("tcp",  "TCP",  false),
+        ("tcp6", "TCP6", true),
+        ("udp",  "UDP",  false),
+        ("udp6", "UDP6", true),
+    ] {
+        let path = format!("{}/{}", net_prefix, file);
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            for line in content.lines().skip(1) {
+                if let Some(row) = parse_net_tcp_line(line, proto, *is_v6) {
+                    map.insert(row.0, row.1);
+                }
+            }
+        }
+    }
+    let unix_path = format!("{}/unix", net_prefix);
+    if let Ok(content) = std::fs::read_to_string(&unix_path) {
+        for line in content.lines().skip(1) {
+            if let Some(row) = parse_net_unix_line(line) {
+                map.insert(row.0, row.1);
+            }
+        }
+    }
+    map
+}
+
+fn parse_net_tcp_line(line: &str, proto: &'static str, is_v6: bool) -> Option<(u64, SocketRow)> {
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    // fields: sl local_addr rem_addr state tx:rx tr:when retrnsmt uid timeout inode
+    if fields.len() < 10 { return None; }
+    let local = fields[1];
+    let remote = fields[2];
+    let state_hex = fields[3];
+    let inode: u64 = fields[9].parse().ok()?;
+
+    let (local_ip, local_port) = split_addr(local, is_v6)?;
+    let (remote_ip, remote_port) = split_addr(remote, is_v6)?;
+    let state = tcp_state_str(state_hex);
+
+    let local_s = format!("{}:{}", local_ip, local_port);
+    let remote_s = if remote_ip == "0.0.0.0" || remote_ip == "::" {
+        String::new()
+    } else {
+        format!("{}:{}", remote_ip, remote_port)
+    };
+
+    Some((inode, SocketRow { proto, local: local_s, remote: remote_s, state: state.to_string() }))
+}
+
+fn split_addr(addr: &str, is_v6: bool) -> Option<(String, u16)> {
+    let (ip_hex, port_hex) = addr.split_once(':')?;
+    let port = u16::from_str_radix(port_hex, 16).ok()?;
+    let ip = if is_v6 { decode_ipv6_hex(ip_hex) } else { decode_ipv4_hex(ip_hex) };
+    Some((ip, port))
+}
+
+fn decode_ipv4_hex(hex: &str) -> String {
+    let v = u32::from_str_radix(hex, 16).unwrap_or(0);
+    let b = v.to_le_bytes();
+    format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3])
+}
+
+fn decode_ipv6_hex(hex: &str) -> String {
+    if hex.len() < 32 { return "?".to_string(); }
+    let mut bytes = [0u8; 16];
+    for (i, chunk) in hex.as_bytes().chunks(8).take(4).enumerate() {
+        if let Ok(s) = std::str::from_utf8(chunk) {
+            if let Ok(v) = u32::from_str_radix(s, 16) {
+                bytes[i*4..i*4+4].copy_from_slice(&v.to_le_bytes());
+            }
+        }
+    }
+    // Compress to standard IPv6 notation (simple, no :: compression)
+    let groups: Vec<String> = bytes.chunks(2)
+        .map(|b| format!("{:02x}{:02x}", b[0], b[1]))
+        .collect();
+    groups.join(":")
+}
+
+fn tcp_state_str(hex: &str) -> &'static str {
+    match hex {
+        "01" => "ESTABLISHED",
+        "02" => "SYN_SENT",
+        "03" => "SYN_RECV",
+        "04" => "FIN_WAIT1",
+        "05" => "FIN_WAIT2",
+        "06" => "TIME_WAIT",
+        "07" => "CLOSE",
+        "08" => "CLOSE_WAIT",
+        "09" => "LAST_ACK",
+        "0A" => "LISTEN",
+        "0B" => "CLOSING",
+        _    => "?",
+    }
+}
+
+fn parse_net_unix_line(line: &str) -> Option<(u64, SocketRow)> {
+    let fields: Vec<&str> = line.split_whitespace().collect();
+    // fields: Num RefCount Protocol Flags Type St Inode [Path]
+    if fields.len() < 7 { return None; }
+    let inode: u64 = fields[6].parse().ok()?;
+    let path = if fields.len() > 7 { fields[7].to_string() } else { String::new() };
+    Some((inode, SocketRow { proto: "UNIX", local: path, remote: String::new(), state: String::new() }))
+}
+
+pub fn get_thread_list(pid: u32) -> Result<Vec<ThreadEntry>, String> {
+    let task_dir = format!("/proc/{}/task", pid);
+    let dir = std::fs::read_dir(&task_dir)
+        .map_err(|e| format!("Cannot read /proc/{}/task: {}", pid, e))?;
+    let mut entries = Vec::new();
+    for entry in dir.flatten() {
+        let tid: u32 = match entry.file_name().to_string_lossy().parse() {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        // Read thread name from status
+        let name = std::fs::read_to_string(format!("{}/{}/status", task_dir, tid))
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("Name:"))
+                    .and_then(|l| l.split_whitespace().nth(1).map(|s| s.to_string()))
+            })
+            .unwrap_or_else(|| format!("{}", tid));
+        // Read state and cpu_ticks from stat (reuse parse_stat_line)
+        let stat_str = std::fs::read_to_string(
+            format!("{}/{}/stat", task_dir, tid)
+        ).unwrap_or_default();
+        let sf = parse_stat_line(&stat_str);
+        entries.push(ThreadEntry {
+            tid,
+            name,
+            state: sf.state,
+            cpu_ticks: sf.utime + sf.stime,
+        });
+    }
+    entries.sort_by_key(|e| e.tid);
     Ok(entries)
 }
 

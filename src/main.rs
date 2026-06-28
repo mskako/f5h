@@ -105,8 +105,19 @@ fn main() -> Result<()> {
 
         if !event::poll(Duration::from_millis(500))? {
             // proc モード中はタイムアウトのたびに自動リフレッシュ
-            if app.proc_mode && app.proc_signal_menu.is_none() && !app.fd_mode {
+            if app.proc_mode && app.proc_signal_menu.is_none() {
                 refresh_procs!(app);
+                // スレッドパネルは左リストと同期して更新
+                if app.right_panel == proc::RightPanel::Threads {
+                    let pid = app.proc_detail.pid;
+                    if pid > 0 {
+                        match proc::get_thread_list(pid) {
+                            Ok(list) => { app.thread_entries = list; app.thread_error = None; app.thread_pid = pid; }
+                            Err(e)   => { app.thread_entries.clear(); app.thread_error = Some(e); }
+                        }
+                        app.thread_cursor = app.thread_cursor.min(app.thread_entries.len().saturating_sub(1));
+                    }
+                }
             }
             continue;
         }
@@ -131,36 +142,74 @@ fn main() -> Result<()> {
             }
             // ── proc モード ───────────────────────────────────────
             if app.proc_mode {
-                // ── fd モード ─────────────────────────────────────
-                if app.fd_mode {
-                    let fd_lh = term_h.saturating_sub(1 + 2 + ui::PROC_LIST_HEADER as usize).max(1);
+                // ── 右パネルフォーカス ─────────────────────────────
+                if app.right_panel_focus {
+                    let panel_lh = term_h.saturating_sub(1 + 2 + ui::PROC_LIST_HEADER as usize).max(1);
                     match (key.code, key.modifiers) {
-                        (KeyCode::Esc, _) | (KeyCode::Char('q'), KeyModifiers::NONE) => {
-                            app.fd_mode = false;
+                        (KeyCode::Tab, _) | (KeyCode::Esc, _) => {
+                            app.right_panel_focus = false;
+                        }
+                        (KeyCode::Char('q'), KeyModifiers::NONE) => {
+                            app.right_panel_focus = false;
                         }
                         (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
-                            if app.fd_cursor > 0 { app.fd_cursor -= 1; }
+                            match app.right_panel {
+                                proc::RightPanel::Fd => {
+                                    if app.fd_cursor > 0 { app.fd_cursor -= 1; }
+                                }
+                                proc::RightPanel::Threads => {
+                                    if app.thread_cursor > 0 { app.thread_cursor -= 1; }
+                                }
+                                proc::RightPanel::None => {}
+                            }
                         }
                         (KeyCode::Down, _) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
-                            if app.fd_cursor + 1 < app.fd_entries.len() { app.fd_cursor += 1; }
+                            match app.right_panel {
+                                proc::RightPanel::Fd => {
+                                    if app.fd_cursor + 1 < app.fd_entries.len() { app.fd_cursor += 1; }
+                                }
+                                proc::RightPanel::Threads => {
+                                    if app.thread_cursor + 1 < app.thread_entries.len() { app.thread_cursor += 1; }
+                                }
+                                proc::RightPanel::None => {}
+                            }
                         }
-                        (KeyCode::Char('g'), KeyModifiers::NONE) => { app.fd_cursor = 0; }
+                        (KeyCode::Char('g'), KeyModifiers::NONE) => {
+                            app.fd_cursor = 0; app.thread_cursor = 0;
+                        }
                         (KeyCode::Char('G'), _) => {
                             app.fd_cursor = app.fd_entries.len().saturating_sub(1);
+                            app.thread_cursor = app.thread_entries.len().saturating_sub(1);
                         }
                         (KeyCode::PageUp, _) => {
-                            app.fd_cursor = app.fd_cursor.saturating_sub(fd_lh);
+                            app.fd_cursor = app.fd_cursor.saturating_sub(panel_lh);
+                            app.thread_cursor = app.thread_cursor.saturating_sub(panel_lh);
                         }
                         (KeyCode::PageDown, _) => {
-                            let n = app.fd_entries.len();
-                            app.fd_cursor = (app.fd_cursor + fd_lh).min(n.saturating_sub(1));
+                            app.fd_cursor = (app.fd_cursor + panel_lh)
+                                .min(app.fd_entries.len().saturating_sub(1));
+                            app.thread_cursor = (app.thread_cursor + panel_lh)
+                                .min(app.thread_entries.len().saturating_sub(1));
                         }
                         (KeyCode::Char('r'), KeyModifiers::NONE) => {
-                            match proc::get_fd_list(app.fd_pid) {
-                                Ok(list) => { app.fd_entries = list; app.fd_error = None; }
-                                Err(e)   => { app.fd_entries.clear(); app.fd_error = Some(e); }
+                            match app.right_panel {
+                                proc::RightPanel::Fd => {
+                                    match proc::get_fd_list(app.fd_pid) {
+                                        Ok(list) => { app.fd_entries = list; app.fd_error = None; }
+                                        Err(e)   => { app.fd_entries.clear(); app.fd_error = Some(e); }
+                                    }
+                                    app.fd_cursor = app.fd_cursor.min(app.fd_entries.len().saturating_sub(1));
+                                }
+                                proc::RightPanel::Threads => {
+                                    let pid = app.thread_pid;
+                                    match proc::get_thread_list(pid) {
+                                        Ok(list) => { app.thread_entries = list; app.thread_error = None; }
+                                        Err(e)   => { app.thread_entries.clear(); app.thread_error = Some(e); }
+                                    }
+                                    app.thread_cursor = app.thread_cursor.min(app.thread_entries.len().saturating_sub(1));
+                                }
+                                proc::RightPanel::None => {}
                             }
-                            app.fd_cursor = app.fd_cursor.min(app.fd_entries.len().saturating_sub(1));
                         }
                         (KeyCode::F(1), KeyModifiers::NONE) => {
                             app.show_help = true;
@@ -230,9 +279,14 @@ fn main() -> Result<()> {
                 let prev_cursor = app.proc_cursor;
                 match (key.code, key.modifiers) {
                     (KeyCode::Esc, _) | (KeyCode::Char('q'), KeyModifiers::NONE) => {
-                        app.proc_mode = false;
-                        app.proc_signal_menu = None;
-                        app.fd_mode = false;
+                        if app.right_panel != proc::RightPanel::None {
+                            // パネルが開いていればパネルを閉じる
+                            app.right_panel = proc::RightPanel::None;
+                            app.right_panel_focus = false;
+                        } else {
+                            app.proc_mode = false;
+                            app.proc_signal_menu = None;
+                        }
                     }
                     (KeyCode::Up, _) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
                         if app.proc_cursor > 0 { app.proc_cursor -= 1; }
@@ -292,22 +346,61 @@ fn main() -> Result<()> {
                     }
                     (KeyCode::Enter, KeyModifiers::NONE)
                     | (KeyCode::Char('f'), KeyModifiers::NONE) => {
-                        // fd モードを開く
+                        // FD パネルのトグル
                         let entry_opt = if app.proc_tree {
                             app.proc_tree_rows.get(app.proc_cursor).and_then(|r| app.proc_entries.get(r.idx))
                         } else {
                             app.proc_entries.get(app.proc_cursor)
                         };
                         if let Some(entry) = entry_opt {
-                            app.fd_pid = entry.pid;
-                            app.fd_proc_name = entry.command.clone();
-                            match proc::get_fd_list(entry.pid) {
-                                Ok(list) => { app.fd_entries = list; app.fd_error = None; }
-                                Err(e)   => { app.fd_entries.clear(); app.fd_error = Some(e); }
+                            let pid = entry.pid;
+                            if app.right_panel == proc::RightPanel::Fd && app.fd_pid == pid {
+                                // 同じ PID で FD パネルが開いていれば閉じる
+                                app.right_panel = proc::RightPanel::None;
+                                app.right_panel_focus = false;
+                            } else {
+                                app.fd_pid = pid;
+                                app.fd_proc_name = entry.command.clone();
+                                match proc::get_fd_list(pid) {
+                                    Ok(list) => { app.fd_entries = list; app.fd_error = None; }
+                                    Err(e)   => { app.fd_entries.clear(); app.fd_error = Some(e); }
+                                }
+                                app.fd_cursor = 0;
+                                app.fd_offset = 0;
+                                app.right_panel = proc::RightPanel::Fd;
+                                app.right_panel_focus = false;
                             }
-                            app.fd_cursor = 0;
-                            app.fd_offset = 0;
-                            app.fd_mode = true;
+                        }
+                    }
+                    (KeyCode::Char('T'), _) => {
+                        // スレッドパネルのトグル
+                        if app.right_panel == proc::RightPanel::Threads {
+                            app.right_panel = proc::RightPanel::None;
+                            app.right_panel_focus = false;
+                        } else {
+                            let pid = if app.proc_tree {
+                                app.proc_tree_rows.get(app.proc_cursor)
+                                    .and_then(|r| app.proc_entries.get(r.idx))
+                                    .map(|e| e.pid).unwrap_or(0)
+                            } else {
+                                app.proc_entries.get(app.proc_cursor).map(|e| e.pid).unwrap_or(0)
+                            };
+                            if pid > 0 {
+                                app.thread_pid = pid;
+                                match proc::get_thread_list(pid) {
+                                    Ok(list) => { app.thread_entries = list; app.thread_error = None; }
+                                    Err(e)   => { app.thread_entries.clear(); app.thread_error = Some(e); }
+                                }
+                                app.thread_cursor = 0;
+                                app.thread_offset = 0;
+                                app.right_panel = proc::RightPanel::Threads;
+                                app.right_panel_focus = false;
+                            }
+                        }
+                    }
+                    (KeyCode::Tab, KeyModifiers::NONE) => {
+                        if app.right_panel != proc::RightPanel::None {
+                            app.right_panel_focus = !app.right_panel_focus;
                         }
                     }
                     (KeyCode::Char('s'), KeyModifiers::NONE) => {
@@ -340,6 +433,16 @@ fn main() -> Result<()> {
                     if let Some(e) = entry_opt {
                         let pid = e.pid;
                         app.proc_detail = proc::get_proc_detail(pid, &app.proc_entries);
+                        // スレッドパネルは左カーソルの PID を追従
+                        if app.right_panel == proc::RightPanel::Threads {
+                            app.thread_pid = pid;
+                            match proc::get_thread_list(pid) {
+                                Ok(list) => { app.thread_entries = list; app.thread_error = None; }
+                                Err(e)   => { app.thread_entries.clear(); app.thread_error = Some(e); }
+                            }
+                            app.thread_cursor = 0;
+                            app.thread_offset = 0;
+                        }
                     }
                 }
                 continue;
